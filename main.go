@@ -19,11 +19,15 @@ func appName() string {
 	return "app"
 }
 
-func newMux() *http.ServeMux {
+type server struct {
+	auth  *auth
+	store *store
+}
+
+func newMux(s *server) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"app": appName(), "message": "hello"})
-	})
+	registerStatic(mux)
+	s.registerAPI(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -44,8 +48,17 @@ func main() {
 	if p := os.Getenv("PORT"); p != "" {
 		addr = ":" + p
 	}
+	pw := os.Getenv("HOUSS_PASSWORD")
+	if pw == "" {
+		log.Fatal("HOUSS_PASSWORD is required")
+	}
+	st, err := openStore(os.Getenv("DATA_DIR"))
+	if err != nil {
+		log.Fatalf("open store: %v", err)
+	}
+	s := &server{auth: newAuth(pw, os.Getenv("HOUSS_SESSION_SECRET")), store: st}
 	tr := setupTracing() // OTLP traces to $OTEL_EXPORTER_OTLP_ENDPOINT (see telemetry.go)
-	srv := &http.Server{Addr: addr, Handler: tr.middleware(newMux()), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: tr.middleware(newMux(s)), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("%s %s listening on %s", appName(), version, addr)
 	log.Fatal(srv.ListenAndServe())
 }
