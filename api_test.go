@@ -201,3 +201,13 @@ func TestAppShellPublic(t *testing.T) {
 		t.Fatalf("manifest icons: %v", m)
 	}
 }
+
+func TestIndexHasRedesignMarkup(t *testing.T) {
+	h := newMux(testServer(t))
+	body := do(t, h, "GET", "/", "", nil).Body.String()
+	for _, want := range []string{`id="empty"`, `class="count"`, `<label>Due`, `<label>List`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("index.html missing %s", want)
+		}
+	}
+}
