@@ -22,25 +22,33 @@
   </form>
 </section>
 <main id="app" hidden>
-  <header><h1>houss</h1><span id="status"></span><button id="logout" type="button">Sign out</button></header>
-  <nav id="tabs">
-    <button data-tab="all" class="active">All</button>
-    <button data-tab="shopping">Shopping</button>
-    <button data-tab="todos">Todos</button>
-    <button data-tab="midterm">Mid-term</button>
+  <header><h1>houss</h1><span id="status" role="status"></span><button id="logout" type="button">Sign out</button></header>
+  <nav id="tabs" aria-label="Filter">
+    <button data-tab="all" class="active">All <span class="count"></span></button>
+    <button data-tab="shopping">Shopping <span class="count"></span></button>
+    <button data-tab="todos">Todos <span class="count"></span></button>
+    <button data-tab="midterm">Mid-term <span class="count"></span></button>
   </nav>
   <div id="tags" hidden></div>
   <form id="add-form">
-    <input id="title" placeholder="Add item" maxlength="200" required>
-    <select id="add-tab" aria-label="Tab">
-      <option value="shopping">Shopping</option>
-      <option value="todos">Todos</option>
-      <option value="midterm">Mid-term</option>
-    </select>
-    <input id="date" type="date" aria-label="Target date">
-    <button>Add</button>
+    <input id="title" placeholder="Add item" aria-label="New item" maxlength="200" required>
+    <button class="primary">Add</button>
+    <label>List
+      <select id="add-tab">
+        <option value="shopping">Shopping</option>
+        <option value="todos">Todos</option>
+        <option value="midterm">Mid-term</option>
+      </select>
+    </label>
+    <label>Due
+      <input id="date" type="date">
+    </label>
   </form>
   <ul id="list"></ul>
+  <div id="empty" hidden>
+    <svg viewBox="0 0 24 24" width="48" height="48" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>
+    <p>Nothing here yet.<br>Add your first item above.</p>
+  </div>
 </main>
 <script src="/app.js"></script>
 </body>

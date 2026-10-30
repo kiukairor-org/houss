@@ -116,6 +116,10 @@ function render() {
   const shown = items
     .filter((i) => (tab === 'all' ? !tagFilter || i.tab === tagFilter : i.tab === tab))
     .sort((a, b) => a.done - b.done || (a.target_date || '9999').localeCompare(b.target_date || '9999') || b.updated_at - a.updated_at);
+  document.querySelectorAll('#tabs button').forEach((b) => {
+    b.querySelector('.count').textContent = b.dataset.tab === 'all' ? items.length : items.filter((i) => i.tab === b.dataset.tab).length;
+  });
+  $('empty').hidden = shown.length > 0;
   const ul = $('list');
   ul.replaceChildren();
   shown.forEach((it) => {
@@ -145,6 +149,7 @@ function render() {
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.textContent = 'Edit';
+    edit.className = 'ghost';
     edit.onclick = () => {
       const t = prompt('Title', it.title);
       if (t === null || !t.trim()) return;
@@ -190,8 +195,9 @@ $('logout').onclick = async () => {
   showLogin();
 };
 $('tabs').onclick = (e) => {
-  if (!e.target.dataset.tab) return;
-  tab = e.target.dataset.tab;
+  const btn = e.target.closest('button[data-tab]');
+  if (!btn) return;
+  tab = btn.dataset.tab;
   if (tab !== 'all') $('add-tab').value = tab;
   render();
 };
