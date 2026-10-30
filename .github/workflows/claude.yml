@@ -1,0 +1,108 @@
+name: claude
+# Author agent. Triggers: an issue labelled `agent`, or an `@claude` comment — only from the owner
+# (kiukairor) or kiu-homie-bot[bot] (catcher issues, CI/reviewer retries). GitHub identity = kiu-homie-bot,
+# token scoped to contents/issues/pull-requests/workflows. NEVER administration.
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+concurrency:
+  group: claude-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    if: >-
+      (github.event_name == 'issues' && github.event.label.name == 'agent' &&
+       contains(fromJSON('["kiukairor","kiu-homie-bot[bot]"]'), github.actor)) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["kiukairor","kiu-homie-bot[bot]"]'), github.event.comment.user.login) &&
+       !contains(github.event.issue.labels.*.name, 'hold') &&
+       !contains(github.event.issue.labels.*.name, 'needs-human'))
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.KIU_HOMIE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.KIU_HOMIE_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-workflows: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod}
+      # Owner's Claude budget gate (D62): ok -> run; paused/limit -> skip with a comment (the catcher
+      # re-triggers it when the budget is resumed).
+      - id: budget
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: .github/scripts/budget-state.sh
+      - name: budget gate - skip Claude
+        if: steps.budget.outputs.state != 'ok'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          NUM: ${{ github.event.issue.number }}
+          STATE: ${{ steps.budget.outputs.state }}
+        run: |
+          printf '⏸️ Agent run skipped: the owner'"'"'s Claude usage gate is **%s**. It runs again automatically when usage is resumed.\n<!-- homie-budget-skipped -->\n' "$STATE" > skip.md
+          gh issue comment "$NUM" -R "$GITHUB_REPOSITORY" --body-file skip.md
+      - id: claude
+        if: steps.budget.outputs.state == 'ok'
+        uses: anthropics/claude-code-action@374f254f5efaf968abfe15d399fd90972e8138b9 # v1.0.251
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.bot.outputs.token }}
+          label_trigger: agent
+          trigger_phrase: "@claude"
+          allowed_bots: "kiu-homie-bot[bot]"
+          bot_id: "349959915"
+          bot_name: "kiu-homie-bot[bot]"
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Edit,Write,Read,Glob,Grep,Bash(go build:*),Bash(go test:*),Bash(go vet:*),Bash(gofmt:*),Bash(go mod tidy),Bash(kubectl kustomize:*),Bash(git status),Bash(git diff:*),Bash(git log:*)"
+            --append-system-prompt "Follow CLAUDE.md. Implement the issue's acceptance criteria with tests, keep the change minimal and in scope, run gofmt/go vet/go test before finishing."
+
+      - name: report Claude usage (D61)
+        if: ${{ !cancelled() && steps.claude.outputs.execution_file != '' }}
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          FILE: ${{ steps.claude.outputs.execution_file }}
+          NUM: ${{ github.event.issue.number }}
+          WF: agent
+          RUN: ${{ github.run_id }}
+        run: .github/scripts/usage-comment.sh
+
+      # The action pushes a branch but does not open PRs. Open it deterministically, as kiu-homie-bot,
+      # and turn on auto-merge (merges only after CI + homie-reviewer approval, per branch protection).
+      - name: open PR + enable auto-merge
+        if: github.event_name == 'issues' && steps.budget.outputs.state == 'ok' && steps.claude.outputs.branch_name != ''
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ steps.claude.outputs.branch_name }}
+          ISSUE: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin "$BRANCH" main || { echo "branch $BRANCH not pushed; nothing to open"; exit 0; }
+          ahead=$(git rev-list --count "origin/main..origin/$BRANCH")
+          [ "$ahead" -gt 0 ] || { echo "no commits on $BRANCH"; exit 0; }
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            printf 'Closes #%s\n\nOpened by the author agent (kiu-homie-bot) for issue #%s. Review: kiu-homie-reviewer after CI is green.\n' "$ISSUE" "$ISSUE" > body.md
+            url=$(gh pr create --head "$BRANCH" --base main --title "$TITLE" --body-file body.md)
+            pr=${url##*/}
+          fi
+          gh pr edit "$pr" --add-label agent
+          # Per-PR preview (Argo CD PR generator, label `preview`): at most 2 concurrent per repo.
+          previews=$(gh pr list --state open --label preview --json number --jq 'length')
+          if [ "$previews" -lt 2 ]; then gh pr edit "$pr" --add-label preview; fi
+          gh pr merge "$pr" --auto --squash || echo "::warning::could not enable auto-merge on #$pr"

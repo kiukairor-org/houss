@@ -1,0 +1,210 @@
+name: review
+# Independent reviewer: runs after CI succeeds on a same-repo PR. Escalation rules are enforced in
+# .github/scripts/review-gate.sh BEFORE Claude runs. Runs in the default-branch context WITH secrets,
+# so it never checks out or executes PR code — the PR is read through the API only.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+permissions:
+  contents: read
+
+jobs:
+  review:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    concurrency:
+      group: review-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: true
+    env:
+      GH_REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      # Default branch only (trusted gate + prompt). No PR ref is ever checked out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+
+      - id: ro
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.KIU_HOMIE_REVIEWER_CLIENT_ID }}
+          private-key: ${{ secrets.KIU_HOMIE_REVIEWER_PRIVATE_KEY }}
+          permission-pull-requests: read
+          permission-contents: read
+          permission-checks: read
+      - id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.KIU_HOMIE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.KIU_HOMIE_BOT_PRIVATE_KEY }}
+          permission-issues: write
+          permission-pull-requests: write
+
+      - id: pr
+        name: resolve PR
+        env: {GH_TOKEN: "${{ steps.ro.outputs.token }}", BRANCH: "${{ github.event.workflow_run.head_branch }}"}
+        run: |
+          pr=$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/pulls" --jq "[.[] | select(.state==\"open\" and .head.ref==\"$BRANCH\")][0].number // empty")
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+          [ -n "$pr" ] && echo "PR #$pr" || echo "no open PR for $BRANCH@$HEAD_SHA"
+
+      # Usage gate (D62): the reviewer still runs while the budget is PAUSED (so nothing half-merges);
+      # it skips Claude only when a real usage LIMIT was hit.
+      - id: budget
+        if: steps.pr.outputs.number != ''
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: .github/scripts/budget-state.sh
+      - id: gate
+        if: steps.pr.outputs.number != ''
+        name: escalation gate (code, before Claude)
+        env:
+          GH_TOKEN: ${{ steps.ro.outputs.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          AUTO_MERGE_ENABLED: ${{ vars.AUTO_MERGE_ENABLED }}
+          MAX_CHANGED_LINES: ${{ vars.REVIEW_MAX_CHANGED_LINES || '400' }}
+        run: bash .github/scripts/review-gate.sh
+
+      # Disabling auto-merge needs Contents write (like hold.yml); mint it only when escalating,
+      # so the token used around the Claude step keeps issues/PRs write only. DECISIONS D37.
+      - id: esc
+        if: steps.gate.outputs.escalate == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.KIU_HOMIE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.KIU_HOMIE_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: escalate to a human
+        if: steps.gate.outputs.escalate == 'true'
+        env:
+          GH_TOKEN: ${{ steps.esc.outputs.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          REASON: ${{ steps.gate.outputs.reason }}
+        run: |
+          gh pr edit "$PR" --add-label needs-human
+          # fail loudly if auto-merge can't be disabled, but don't fail when it was never enabled
+          if [ "$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+            gh pr merge "$PR" --disable-auto
+          fi
+          printf 'Not auto-reviewed — escalated to a human:\n%s\n' "$REASON" > body.md
+          gh pr comment "$PR" --body-file body.md
+
+      - name: usage limit - reviewer waits
+        if: steps.gate.outputs.escalate == 'false' && steps.budget.outputs.state == 'limit'
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          printf '⏸️ Review skipped: Claude usage limit reached (owner usage gate). Push a commit or re-run CI after the reset to review.\n<!-- homie-budget-skipped -->\n' > skip.md
+          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body-file skip.md
+      - id: prompt
+        if: steps.gate.outputs.escalate == 'false' && steps.budget.outputs.state != 'limit'
+        run: |
+          {
+            echo "text<<PROMPT_EOF"
+            cat .github/reviewer-prompt.md
+            echo; echo "Repository: $GH_REPO"; echo "PR number: ${{ steps.pr.outputs.number }}"; echo "Head SHA: $HEAD_SHA"
+            echo "PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: claude
+        if: steps.gate.outputs.escalate == 'false' && steps.budget.outputs.state != 'limit'
+        uses: anthropics/claude-code-action@374f254f5efaf968abfe15d399fd90972e8138b9 # v1.0.251
+        env:
+          GH_TOKEN: ${{ steps.ro.outputs.token }}   # read-only token for the gh commands below
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.ro.outputs.token }}
+          allowed_bots: "kiu-homie-bot[bot]"
+          prompt: ${{ steps.prompt.outputs.text }}
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh issue view:*)"
+            --disallowedTools "Edit,Write,NotebookEdit,WebFetch,WebSearch"
+            --json-schema '{"type":"object","additionalProperties":false,"required":["verdict","summary","findings"],"properties":{"verdict":{"enum":["approve","request_changes"]},"summary":{"type":"string","maxLength":3000},"findings":{"type":"array","maxItems":30,"items":{"type":"object","additionalProperties":false,"required":["severity","issue"],"properties":{"severity":{"enum":["blocker","major","minor","nit"]},"file":{"type":"string"},"line":{"type":"integer"},"issue":{"type":"string","maxLength":1500}}}}}}'
+
+      - name: report Claude usage (D61)
+        if: ${{ !cancelled() && steps.claude.outputs.execution_file != '' }}
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          FILE: ${{ steps.claude.outputs.execution_file }}
+          NUM: ${{ steps.pr.outputs.number }}
+          WF: review
+          RUN: ${{ github.run_id }}
+        run: .github/scripts/usage-comment.sh
+      - id: rw
+        if: steps.claude.outcome == 'success'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.KIU_HOMIE_REVIEWER_CLIENT_ID }}
+          private-key: ${{ secrets.KIU_HOMIE_REVIEWER_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: ${{ vars.REVIEWER_MERGE_FALLBACK == 'true' && 'write' || 'read' }}
+          permission-checks: read
+
+      - name: submit review (deterministic; Claude cannot post)
+        if: steps.claude.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.rw.outputs.token }}
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
+          PR: ${{ steps.pr.outputs.number }}
+          OUT: ${{ steps.claude.outputs.structured_output }}
+          AUTO_MERGE_ENABLED: ${{ vars.AUTO_MERGE_ENABLED }}
+          FALLBACK: ${{ vars.REVIEWER_MERGE_FALLBACK }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          verdict=$(jq -r '.verdict' <<<"$OUT")
+          # Never approve with a blocker/major finding, whatever the verdict says.
+          serious=$(jq '[.findings[] | select(.severity=="blocker" or .severity=="major")] | length' <<<"$OUT")
+          [ "$serious" -eq 0 ] || verdict=request_changes
+          {
+            echo "### Review by kiu-homie-reviewer"; echo
+            jq -r '.summary' <<<"$OUT"; echo
+            jq -r '.findings[] | "- **\(.severity)** \(if .file then "`\(.file)\(if .line then ":\(.line)" else "" end)` " else "" end)— \(.issue)"' <<<"$OUT"
+            echo; echo "_Run: ${RUN_URL}_"
+          } > review.md
+
+          # Re-check the kill switch, labels and head right before approving (TOCTOU).
+          pr_json=$(gh api "repos/$GH_REPO/pulls/$PR")
+          labels=$(jq -r '[.labels[].name] | join(",")' <<<"$pr_json")
+          if [ "$verdict" = approve ]; then
+            if [ "$AUTO_MERGE_ENABLED" != true ] || [[ ",$labels," == *,hold,* ]] || [ "$(jq -r .head.sha <<<"$pr_json")" != "$HEAD_SHA" ]; then
+              echo "state changed since the gate; not approving"; exit 0
+            fi
+            gh pr review "$PR" --approve --body-file review.md
+            if [ "$FALLBACK" = true ]; then
+              # Fallback (only if an App approval does not satisfy "required reviews"): merge if all checks are green.
+              if gh pr checks "$PR" --required >/dev/null 2>&1; then gh pr merge "$PR" --squash --delete-branch; fi
+            fi
+            exit 0
+          fi
+
+          gh pr review "$PR" --request-changes --body-file review.md
+          # Counts against the same 2-round cap as CI failures; retries are posted as kiu-homie-bot.
+          case ",$labels," in
+            *,fix-round-2,*) round=3 ;;
+            *,fix-round-1,*) round=2 ;;
+            *) round=1 ;;
+          esac
+          export GH_TOKEN="$BOT_TOKEN"
+          if [ "$round" -gt 2 ]; then
+            gh pr edit "$PR" --add-label needs-human
+            gh pr comment "$PR" --body "Changes requested after 2 fix rounds — handing over to a human."
+            exit 0
+          fi
+          gh pr edit "$PR" --add-label "fix-round-$round"
+          { echo "@claude the reviewer requested changes (fix round $round of 2). Address every blocker/major finding below, keep the change in scope, and push to this branch."; echo; cat review.md; } > retry.md
+          gh pr comment "$PR" --body-file retry.md
+
+      - name: reviewer failed
+        if: ${{ !cancelled() && steps.gate.outputs.escalate == 'false' && steps.claude.outcome == 'failure' }}
+        env: {GH_TOKEN: "${{ steps.bot.outputs.token }}", PR: "${{ steps.pr.outputs.number }}"}
+        run: |
+          gh pr edit "$PR" --add-label needs-human
+          gh pr comment "$PR" --body "The reviewer agent failed to produce a verdict — needs a human. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

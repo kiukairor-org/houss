@@ -1,0 +1,27 @@
+name: hold
+# Owner override: labelling a PR `hold` turns auto-merge off immediately (the reviewer also refuses
+# to approve while it is set). Remove the label and re-enable auto-merge (or merge) by hand.
+on:
+  pull_request:
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  hold:
+    if: github.event.label.name == 'hold' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - id: bot
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.KIU_HOMIE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.KIU_HOMIE_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr merge "$PR" --disable-auto || true
+          gh pr comment "$PR" --body "On hold: auto-merge disabled. Remove \`hold\` and merge (or re-enable auto-merge) manually."

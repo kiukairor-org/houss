@@ -1,0 +1,12 @@
+# Deployed by Argo CD (ApplicationSets in kiukairor-org/homelab-gitops), which sets:
+#   namespace (app-<repo> / pr-<repo>-<n>), image tag (= git commit SHA built by ci.yml),
+#   APP_NAME, and the tailnet hostname of the Ingress. Keep resource names as-is.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+labels:
+  - pairs: {app.kubernetes.io/name: app}
+    includeSelectors: true
