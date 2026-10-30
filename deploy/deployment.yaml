@@ -4,12 +4,16 @@ metadata:
   name: app
 spec:
   replicas: 1
+  strategy: {type: Recreate}                         # RWO volume
   revisionHistoryLimit: 2
   selector: {}
   template:
     spec:
-      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, fsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
       automountServiceAccountToken: false
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: app-data}
       containers:
         - name: app
           image: ghcr.io/kiukairor-org/app-template:latest   # overridden by Argo CD
@@ -18,6 +22,11 @@ spec:
             - {name: APP_NAME, value: app}                   # overridden by Argo CD
             # Traces go to the in-cluster OpenTelemetry Collector (homelab-gitops apps/observability), no key here.
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.observability.svc.cluster.local:4318"}
+            - {name: DATA_DIR, value: /data}
+            # Secret "houss-secrets" (key: password) is created out of band; it is not stored in this repo.
+            - name: HOUSS_PASSWORD
+              valueFrom: {secretKeyRef: {name: houss-secrets, key: password}}
+          volumeMounts: [{name: data, mountPath: /data}]
           resources:
             requests: {cpu: 10m, memory: 16Mi}
             limits: {memory: 64Mi}

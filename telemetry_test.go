@@ -59,7 +59,7 @@ func attr(span map[string]any, key string) map[string]any {
 func TestTracingExportsServerSpans(t *testing.T) {
 	col, got := fakeCollector(t)
 	tr := newTracer(col.URL, "demo")
-	mux := newMux()
+	mux := newMux(testServer(t))
 	mux.HandleFunc("GET /fail", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "x"})
 	})
@@ -100,7 +100,7 @@ func TestTracingOffWithoutEndpoint(t *testing.T) {
 	if tr != nil {
 		t.Fatal("tracer should be nil without an endpoint")
 	}
-	mux := newMux()
+	mux := newMux(testServer(t))
 	if h := tr.middleware(mux); h != http.Handler(mux) {
 		t.Fatal("nil tracer must return the mux unchanged")
 	}

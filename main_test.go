@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func get(t *testing.T, path string) (*httptest.ResponseRecorder, map[string]string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	newMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	newMux(testServer(t)).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	var body map[string]string
 	if rec.Code == http.StatusOK {
 		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -20,11 +21,10 @@ func get(t *testing.T, path string) (*httptest.ResponseRecorder, map[string]stri
 	return rec, body
 }
 
-func TestRoot(t *testing.T) {
-	t.Setenv("APP_NAME", "demo")
-	rec, body := get(t, "/")
-	if rec.Code != http.StatusOK || body["app"] != "demo" || body["message"] != "hello" {
-		t.Fatalf("got %d %v", rec.Code, body)
+func TestRootServesApp(t *testing.T) {
+	rec := do(t, newMux(testServer(t)), http.MethodGet, "/", "", nil)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("got %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }
 
