@@ -100,4 +100,22 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": s.store.List("")})
 	}))
+
+	// Prices come from the server-side cache only; missing ones are fetched in the background,
+	// so this never waits on a store. Clients poll it to pick up results.
+	mux.HandleFunc("GET /api/prices", a.require(func(w http.ResponseWriter, r *http.Request) {
+		out := map[string]PriceView{}
+		total, priced := 0.0, 0
+		if s.prices != nil {
+			for _, it := range s.store.List("shopping") {
+				v := s.prices.Get(it.Title)
+				out[it.ID] = v
+				if v.Status == "ok" && !it.Done {
+					total += v.Price.Price
+					priced++
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"prices": out, "total": total, "priced": priced})
+	}))
 }

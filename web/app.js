@@ -8,6 +8,8 @@ let tab = 'all';
 let addTab = 'shopping'; // list new items go to; follows the last non-'all' tab
 let tagFilter = null;
 let syncing = false;
+let prices = {}; // item id -> {status, ...} from /api/prices (last known; never blocks the list)
+let priceTotal = null;
 
 // ---- IndexedDB ----
 const dbp = new Promise((resolve, reject) => {
@@ -80,6 +82,7 @@ async function sync() {
     await idbReplaceItems(items);
     setStatus('');
     render();
+    loadPrices();
   } catch (e) {
     setStatus('Offline — changes will sync later');
   } finally {
@@ -133,7 +136,8 @@ function render() {
     cb.onchange = () => mutate({ ...it, done: cb.checked });
     const title = document.createElement('span');
     title.className = 'title';
-    title.textContent = it.title;
+    title.append(it.title);
+    if (it.tab === 'shopping') title.append(priceLine(prices[it.id]));
     li.append(cb, title);
     if (tab === 'all') {
       const tag = document.createElement('span');
@@ -166,6 +170,46 @@ function render() {
     li.append(edit, del);
     ul.append(li);
   });
+  const tot = $('total');
+  tot.hidden = !(tab === 'shopping' && priceTotal !== null);
+  if (!tot.hidden) tot.textContent = 'Total: £' + priceTotal.toFixed(2);
+}
+
+function age(ms) {
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  return m < 60 ? m + 'm ago' : Math.round(m / 60) + 'h ago';
+}
+function priceLine(p) {
+  const el = document.createElement('span');
+  el.className = 'price';
+  if (!p) return el;
+  if (p.status === 'pending') { el.textContent = 'checking price…'; return el; }
+  if (p.status !== 'ok') { el.textContent = 'no price'; return el; }
+  const a = document.createElement('a');
+  a.href = p.url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  a.textContent = p.product;
+  el.append('£' + p.price.toFixed(2) + ' ' + p.store + ' · ', a, ' · ' + age(Date.parse(p.fetched_at)));
+  return el;
+}
+
+// Prices load after the list has rendered; poll quickly while any lookup is pending.
+let priceTimer = null;
+async function loadPrices() {
+  clearTimeout(priceTimer);
+  let pending = false;
+  try {
+    const res = await fetch('/api/prices');
+    if (res.ok) {
+      const d = await res.json();
+      prices = d.prices || {};
+      priceTotal = d.priced ? d.total : null;
+      pending = Object.values(prices).some((p) => p.status === 'pending');
+      render();
+    }
+  } catch (e) { /* offline: keep showing the last known prices */ }
+  priceTimer = setTimeout(loadPrices, pending ? 5000 : 300000);
 }
 
 // ---- screens ----
