@@ -60,14 +60,27 @@ async function mutate(change) {
   sync();
 }
 
+// Only a rejected fetch() (no response at all) counts as being offline; anything else is a real error.
+class NetworkError extends Error {}
+async function netFetch(url, opts) {
+  try {
+    return await fetch(url, opts);
+  } catch (e) {
+    throw new NetworkError(e && e.message);
+  }
+}
+function syncStatus(e) {
+  return e instanceof NetworkError ? 'Offline — changes will sync later' : 'Sync error: ' + (e && e.message ? e.message : e);
+}
+
 async function sync() {
   if (syncing) return;
   syncing = true;
   try {
     const q = await queued();
     const res = q.length
-      ? await fetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes: q.map((x) => x.change) }) })
-      : await fetch('/api/items');
+      ? await netFetch('/api/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes: q.map((x) => x.change) }) })
+      : await netFetch('/api/items');
     if (res.status === 401) return showLogin();
     if (res.status >= 400 && res.status < 500 && q.length) {
       // A change the server rejects would block the queue forever: drop it.
@@ -84,7 +97,8 @@ async function sync() {
     render();
     loadPrices();
   } catch (e) {
-    setStatus('Offline — changes will sync later');
+    console.error('sync failed', e);
+    setStatus(syncStatus(e));
   } finally {
     syncing = false;
   }
