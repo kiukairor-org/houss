@@ -212,6 +212,22 @@ func TestIndexHasRedesignMarkup(t *testing.T) {
 	}
 }
 
+func TestIndexTabOrder(t *testing.T) {
+	h := newMux(testServer(t))
+	body := do(t, h, "GET", "/", "", nil).Body.String()
+	last := -1
+	for _, tab := range []string{"shopping", "todos", "midterm", "all"} {
+		i := strings.Index(body, `data-tab="`+tab+`"`)
+		if i <= last {
+			t.Fatalf("tab %s out of order", tab)
+		}
+		last = i
+	}
+	if !strings.Contains(body, `data-tab="shopping" class="active"`) {
+		t.Fatal("shopping should be the default tab")
+	}
+}
+
 func TestIndexHasNoListDropdown(t *testing.T) {
 	h := newMux(testServer(t))
 	body := do(t, h, "GET", "/", "", nil).Body.String()
