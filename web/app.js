@@ -84,7 +84,10 @@ async function sync() {
     render();
     loadPrices();
   } catch (e) {
-    setStatus('Offline — changes will sync later');
+    console.error('sync failed', e);
+    // Only a network failure (fetch rejects with TypeError) or navigator.onLine === false is "offline".
+    const network = !navigator.onLine || (e instanceof TypeError && /fetch|network|load failed/i.test(e.message || ''));
+    setStatus(network ? 'Offline — changes will sync later' : 'Sync error: ' + (e && e.message ? e.message : e));
   } finally {
     syncing = false;
   }
