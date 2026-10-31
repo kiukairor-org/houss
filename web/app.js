@@ -4,7 +4,7 @@
 const TABS = { shopping: 'Shopping', todos: 'Todos', midterm: 'Mid-term' };
 const $ = (id) => document.getElementById(id);
 let items = [];
-let tab = 'all';
+let tab = 'shopping';
 let addTab = 'shopping'; // list new items go to; follows the last non-'all' tab
 let tagFilter = null;
 let syncing = false;
