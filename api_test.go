@@ -205,9 +205,23 @@ func TestAppShellPublic(t *testing.T) {
 func TestIndexHasRedesignMarkup(t *testing.T) {
 	h := newMux(testServer(t))
 	body := do(t, h, "GET", "/", "", nil).Body.String()
-	for _, want := range []string{`id="empty"`, `class="count"`, `<label>Due`, `<label>List`} {
+	for _, want := range []string{`id="empty"`, `class="count"`, `<label>Due`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index.html missing %s", want)
 		}
+	}
+}
+
+func TestIndexHasNoListDropdown(t *testing.T) {
+	h := newMux(testServer(t))
+	body := do(t, h, "GET", "/", "", nil).Body.String()
+	for _, bad := range []string{`<label>List`, `id="add-tab"`} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("index.html still contains %s", bad)
+		}
+	}
+	js := do(t, h, "GET", "/app.js", "", nil).Body.String()
+	if strings.Contains(js, "add-tab") {
+		t.Fatal("app.js still references add-tab")
 	}
 }
