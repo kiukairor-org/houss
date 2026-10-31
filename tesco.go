@@ -82,6 +82,9 @@ func classifyTesco(status int, body string, tiles int) string {
 	if status == http.StatusForbidden || status == http.StatusTooManyRequests {
 		return classBlocked
 	}
+	if status == http.StatusOK && tiles > 0 {
+		return classOK // parsed products win over incidental marker words (e.g. a captcha script reference)
+	}
 	lower := strings.ToLower(body)
 	for _, m := range challengeMarkers {
 		if strings.Contains(lower, m) {
@@ -91,10 +94,7 @@ func classifyTesco(status int, body string, tiles int) string {
 	if status != http.StatusOK {
 		return classOther
 	}
-	if tiles == 0 {
-		return classParseEmpty
-	}
-	return classOK
+	return classParseEmpty
 }
 
 func snippet(body string, n int) string {
@@ -175,9 +175,13 @@ func (t *tescoProvider) Lookup(ctx context.Context, item string) (Price, error) 
 		return Price{}, err
 	}
 	d := t.fetch(ctx, item, false)
+	snip := ""
+	if d.Classification != classOK {
+		snip = d.Snippet
+	}
 	log.Printf("tesco lookup %q: status=%d size=%d class=%s tiles=%d server=%q cf-ray=%q retry-after=%q cookies=%v snippet=%q err=%q",
 		item, d.Status, d.BodySize, d.Classification, d.Tiles, d.Headers["Server"], d.Headers["Cf-Ray"],
-		d.Headers["Retry-After"], d.CookieNames, d.Snippet, d.Error)
+		d.Headers["Retry-After"], d.CookieNames, snip, d.Error)
 	addSpanAttr(ctx, strAttr("tesco.classification", d.Classification))
 	if d.Error != "" {
 		return Price{}, errors.New(d.Error)

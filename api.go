@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
@@ -42,9 +43,15 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 			apiErr(w, errInvalid)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), lookupTime*2)
+		compare := r.URL.Query().Get("compare") == "1"
+		profiles := 1
+		if compare {
+			profiles = 2
+		}
+		// Each profile may wait on the rate limiter and then do a full request.
+		ctx, cancel := context.WithTimeout(r.Context(), lookupTime*2*time.Duration(profiles))
 		defer cancel()
-		res, err := s.tesco.Diagnose(ctx, q, r.URL.Query().Get("compare") == "1")
+		res, err := s.tesco.Diagnose(ctx, q, compare)
 		if err != nil {
 			apiErr(w, err)
 			return

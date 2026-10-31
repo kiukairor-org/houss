@@ -22,6 +22,8 @@ func tescoDiagServer(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusTooManyRequests)
 		case "challenge":
 			_, _ = w.Write([]byte("<html><title>Pardon the interruption</title></html>"))
+		case "captcha-ok": // valid tiles plus an incidental marker word
+			_, _ = w.Write([]byte(tescoFixture + "<script src=\"/recaptcha.js\">captcha</script>"))
 		case "empty":
 			_, _ = w.Write([]byte("<html><body><ul></ul></body></html>"))
 		case "ua": // blocks the default identity only
@@ -51,6 +53,7 @@ func TestTescoClassification(t *testing.T) {
 		{"challenge", classBlocked, 200, 0},
 		{"empty", classParseEmpty, 200, 0},
 		{"eggs", classOK, 200, 5},
+		{"captcha-ok", classOK, 200, 5},
 	}
 	for _, c := range cases {
 		res, err := tp.Diagnose(context.Background(), c.q, false)
@@ -65,6 +68,14 @@ func TestTescoClassification(t *testing.T) {
 	if d[0].Headers["Server"] != "AkamaiGHost" || len(d[0].CookieNames) != 1 || d[0].CookieNames[0] != "_abck" ||
 		d[0].Snippet != "nope" || d[0].BodySize != 4 {
 		t.Fatalf("headers/cookies/snippet: %+v", d[0])
+	}
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(tescoFixture + "<script src=\"/recaptcha.js\">captcha</script>"))
+	}))
+	defer okSrv.Close()
+	tp2 := &tescoProvider{baseURL: okSrv.URL, client: okSrv.Client()}
+	if _, err := tp2.Lookup(context.Background(), "large eggs"); err != nil {
+		t.Fatalf("page with tiles must still yield a price: %v", err)
 	}
 	// Lookup fails for every non-ok class, and the failures stay distinguishable.
 	if _, err := tp.Lookup(context.Background(), "empty"); err == nil || !strings.Contains(err.Error(), classParseEmpty) {
