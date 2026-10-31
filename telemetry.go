@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -152,6 +153,22 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+type spanAttrsKey struct{}
+
+type spanAttrs struct {
+	mu    sync.Mutex
+	attrs []otlpAttr
+}
+
+// addSpanAttr attaches an attribute to the current request's span; a no-op without tracing.
+func addSpanAttr(ctx context.Context, a otlpAttr) {
+	if sa, ok := ctx.Value(spanAttrsKey{}).(*spanAttrs); ok {
+		sa.mu.Lock()
+		sa.attrs = append(sa.attrs, a)
+		sa.mu.Unlock()
+	}
+}
+
 // middleware wraps the mux; with a nil tracer it returns the mux unchanged.
 func (t *tracer) middleware(mux *http.ServeMux) http.Handler {
 	if t == nil {
@@ -164,6 +181,8 @@ func (t *tracer) middleware(mux *http.ServeMux) http.Handler {
 		}
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		sa := &spanAttrs{}
+		r = r.WithContext(context.WithValue(r.Context(), spanAttrsKey{}, sa)) // r.Pattern is set on this copy
 		mux.ServeHTTP(rec, r)
 		end := time.Now()
 		route := r.Pattern // set by ServeMux (Go 1.23+), e.g. "GET /version"; empty on 404
@@ -186,6 +205,9 @@ func (t *tracer) middleware(mux *http.ServeMux) http.Handler {
 				intAttr("http.response.status_code", rec.status),
 			},
 		}
+		sa.mu.Lock()
+		s.Attributes = append(s.Attributes, sa.attrs...)
+		sa.mu.Unlock()
 		if rec.status >= 500 {
 			s.Status.Code = statusCodeError
 		}
