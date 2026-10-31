@@ -46,6 +46,9 @@ button { cursor: pointer; }
 #list li.done .title { text-decoration: line-through; color: var(--muted); }
 li input[type=checkbox] { flex: none; width: 28px; height: 28px; min-height: 0; margin: 8px; padding: 0; accent-color: var(--accent); }
 .title { flex: 1; min-width: 0; word-break: break-word; }
+.price { display: block; font-size: .8rem; color: var(--muted); }
+.price a { color: var(--accent-text); }
+#total { margin: 0 0 var(--s2); font-weight: 600; text-align: right; }
 .date { font-size: .8rem; color: var(--muted); }
 .overdue .date { color: var(--over); font-weight: 600; }
 .soon .date { color: var(--soon); font-weight: 600; }

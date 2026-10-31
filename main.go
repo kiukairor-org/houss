@@ -22,6 +22,8 @@ func appName() string {
 type server struct {
 	auth  *auth
 	store *store
+	// prices is nil when price lookups are disabled (e.g. in most tests).
+	prices *priceService
 }
 
 func newMux(s *server) *http.ServeMux {
@@ -56,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
-	s := &server{auth: newAuth(pw, os.Getenv("HOUSS_SESSION_SECRET")), store: st}
+	s := &server{auth: newAuth(pw, os.Getenv("HOUSS_SESSION_SECRET")), store: st, prices: newPriceService(newTescoProvider())}
 	tr := setupTracing() // OTLP traces to $OTEL_EXPORTER_OTLP_ENDPOINT (see telemetry.go)
 	srv := &http.Server{Addr: addr, Handler: tr.middleware(newMux(s)), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("%s %s listening on %s", appName(), version, addr)
