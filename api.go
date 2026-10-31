@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 )
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
@@ -31,6 +34,29 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/logout", a.logout)
 	mux.HandleFunc("GET /api/session", a.require(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
+	}))
+
+	// Runs one live Tesco lookup and reports what came back; compare=1 also tries browser-like headers.
+	mux.HandleFunc("GET /api/debug/tesco", a.require(func(w http.ResponseWriter, r *http.Request) {
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		if s.tesco == nil || q == "" {
+			apiErr(w, errInvalid)
+			return
+		}
+		compare := r.URL.Query().Get("compare") == "1"
+		profiles := 1
+		if compare {
+			profiles = 2
+		}
+		// Each profile may wait on the rate limiter and then do a full request.
+		ctx, cancel := context.WithTimeout(r.Context(), lookupTime*2*time.Duration(profiles))
+		defer cancel()
+		res, err := s.tesco.Diagnose(ctx, q, compare)
+		if err != nil {
+			apiErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"query": q, "results": res})
 	}))
 
 	mux.HandleFunc("GET /api/items", a.require(func(w http.ResponseWriter, r *http.Request) {
