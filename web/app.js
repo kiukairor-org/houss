@@ -5,6 +5,7 @@ const TABS = { shopping: 'Shopping', todos: 'Todos', midterm: 'Mid-term' };
 const $ = (id) => document.getElementById(id);
 let items = [];
 let tab = 'all';
+let addTab = 'shopping'; // list new items go to; follows the last non-'all' tab
 let tagFilter = null;
 let syncing = false;
 
@@ -198,14 +199,14 @@ $('tabs').onclick = (e) => {
   const btn = e.target.closest('button[data-tab]');
   if (!btn) return;
   tab = btn.dataset.tab;
-  if (tab !== 'all') $('add-tab').value = tab;
+  if (tab !== 'all') addTab = tab;
   render();
 };
 $('add-form').onsubmit = (e) => {
   e.preventDefault();
   const title = $('title').value.trim();
   if (!title) return;
-  mutate({ id: newId(), title, tab: $('add-tab').value, done: false, target_date: $('date').value });
+  mutate({ id: newId(), title, tab: addTab, done: false, target_date: $('date').value });
   $('title').value = '';
   $('date').value = '';
 };
