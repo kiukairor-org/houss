@@ -239,6 +239,7 @@ async function loadSmart() {
     const res = await fetch('/api/llm');
     if (res.ok) smart = await res.json();
   } catch (e) { /* offline: keep the last known state */ }
+  if (chatting) renderChat();
   $('title').placeholder = !smart.enabled ? 'Add item' : smart.available ? 'Add items, e.g. milk and eggs for tomorrow' : 'Add item (smart add unavailable)';
 }
 // Returns [{title, tab, target_date}] or null (= add the note as typed). Never waits more than 6 s.
@@ -271,6 +272,100 @@ function showToast(text) {
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4000);
 }
 
+// ---- assistant chat ----
+// One streamed answer per message from /api/chat; the conversation lives in this tab only
+// (sessionStorage). The assistant never changes data: "+ " lines become buttons that add through addNote.
+let chatLog = loadChat();
+let chatting = false;
+let chatBusy = false;
+function loadChat() {
+  try { return JSON.parse(sessionStorage.getItem('houss-chat')) || []; } catch (e) { return []; }
+}
+function saveChat() {
+  try { sessionStorage.setItem('houss-chat', JSON.stringify(chatLog)); } catch (e) { /* private mode: memory only */ }
+}
+function chatStatusText(s, hour) {
+  if (!s.enabled) return 'The assistant is switched off.';
+  if (s.available) return '';
+  return hour >= 19 || hour < 7 ? 'Assistant is asleep (back at 07:00)' : 'Assistant unavailable right now';
+}
+function londonHour() {
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+}
+function parseSuggestions(text) {
+  return text.split('\n').filter((l) => /^\s*\+\s+\S/.test(l)).map((l) => l.replace(/^\s*\+\s+/, '').trim()).filter((l) => l.length <= 200);
+}
+function renderChat() {
+  $('app').classList.toggle('chatting', chatting);
+  const st = chatStatusText(smart, londonHour());
+  $('chat-status').textContent = st;
+  $('chat-input').disabled = !!st || chatBusy;
+  const log = $('chat-log');
+  log.replaceChildren();
+  chatLog.forEach((m) => {
+    const d = document.createElement('div');
+    d.className = 'msg ' + m.role + (m.error ? ' error' : '');
+    const p = document.createElement('p');
+    p.textContent = m.content || '…';
+    d.append(p);
+    if (m.role === 'assistant' && !m.pending && !m.error) {
+      parseSuggestions(m.content).forEach((sug) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'suggest';
+        b.textContent = '➕ ' + sug;
+        b.onclick = async () => { b.disabled = true; await addNote(sug, ''); b.textContent = '✓ ' + sug; };
+        d.append(b);
+      });
+    }
+    log.append(d);
+  });
+  log.scrollTop = log.scrollHeight;
+}
+async function sendChat(text) {
+  chatLog.push({ role: 'user', content: text });
+  const history = chatLog.filter((m) => !m.error && m.content).slice(-20).map(({ role, content }) => ({ role, content: content.slice(0, 1000) }));
+  const reply = { role: 'assistant', content: '', pending: true };
+  chatLog.push(reply);
+  chatBusy = true;
+  renderChat();
+  try {
+    const res = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history }) });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      reply.error = true;
+      if (res.status === 503) { smart = { enabled: d.error !== 'disabled', available: false }; reply.content = chatStatusText(smart, londonHour()); }
+      else if (res.status === 429) reply.content = d.error || 'Too many messages, wait a minute.';
+      else reply.content = 'The assistant could not answer (' + (d.error || 'HTTP ' + res.status) + ').';
+    } else {
+      const rd = res.body.getReader();
+      const dec = new TextDecoder();
+      for (;;) {
+        const { done, value } = await rd.read();
+        if (done) break;
+        reply.content += dec.decode(value, { stream: true });
+        renderChat();
+      }
+    }
+  } catch (e) {
+    if (!reply.content) { reply.content = 'Offline — the assistant needs a connection.'; reply.error = true; }
+  }
+  reply.pending = false;
+  chatBusy = false;
+  saveChat();
+  renderChat();
+}
+$('chat-open').onclick = () => { chatting = true; renderChat(); loadSmart(); };
+$('chat-back').onclick = () => { chatting = false; renderChat(); };
+$('chat-new').onclick = () => { chatLog = []; saveChat(); renderChat(); };
+$('chat-form').onsubmit = (e) => {
+  e.preventDefault();
+  const text = $('chat-input').value.trim();
+  if (!text || chatBusy) return;
+  $('chat-input').value = '';
+  sendChat(text);
+};
+
 // ---- screens ----
 function showLogin() { $('app').hidden = true; $('login').hidden = false; }
 function showApp() { $('login').hidden = true; $('app').hidden = false; }
@@ -295,6 +390,8 @@ $('login-form').onsubmit = async (e) => {
 $('logout').onclick = async () => {
   await fetch('/api/logout', { method: 'POST' }).catch(() => {});
   items = [];
+  chatLog = [];
+  saveChat();
   await idbReplaceItems([]);
   showLogin();
 };
@@ -305,11 +402,8 @@ $('tabs').onclick = (e) => {
   if (tab !== 'all') addTab = tab;
   render();
 };
-$('add-form').onsubmit = async (e) => {
-  e.preventDefault();
-  const title = $('title').value.trim();
-  if (!title || adding) return;
-  const date = $('date').value; // a date picked by hand always wins over the LLM's
+// addNote adds one note through smart add when it is available, else exactly as typed.
+async function addNote(title, date) {
   let parsed = null;
   const tried = smart.available;
   if (tried) {
@@ -326,9 +420,15 @@ $('add-form').onsubmit = async (e) => {
     if (smart.enabled) it.needs_sort = true;
     await mutate(it);
   }
+  showToast(addedMessage(parsed, tried));
+}
+$('add-form').onsubmit = async (e) => {
+  e.preventDefault();
+  const title = $('title').value.trim();
+  if (!title || adding) return;
+  await addNote(title, $('date').value); // a date picked by hand always wins over the LLM's
   $('title').value = '';
   $('date').value = '';
-  showToast(addedMessage(parsed, tried));
 };
 
 (async function init() {

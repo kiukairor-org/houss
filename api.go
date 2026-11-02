@@ -130,6 +130,12 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"items": s.store.List("")})
 	}))
 
+	// Assistant chat (chat.go): one streamed answer per request, read-only.
+	if s.chat == nil {
+		s.chat = newChatLimiter()
+	}
+	mux.HandleFunc("POST /api/chat", a.require(s.handleChat))
+
 	// Smart add: whether to try it, so clients skip the wait while the LLM is down (e.g. at night).
 	mux.HandleFunc("GET /api/llm", a.require(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]bool{"enabled": s.llm != nil, "available": s.llm.Available()})

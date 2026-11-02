@@ -22,7 +22,7 @@
   </form>
 </section>
 <main id="app" hidden>
-  <header><h1>houss</h1><span id="status" role="status"></span><button id="logout" type="button">Sign out</button></header>
+  <header><h1>houss</h1><span id="status" role="status"></span><button id="chat-open" type="button" aria-label="Assistant">💬</button><button id="logout" type="button">Sign out</button></header>
   <nav id="tabs" aria-label="Filter">
     <button data-tab="shopping" class="active">Shopping <span class="count"></span></button>
     <button data-tab="todos">Todos <span class="count"></span></button>
@@ -40,6 +40,15 @@
   <p id="toast" role="status" hidden></p>
   <p id="total" hidden></p>
   <ul id="list"></ul>
+  <section id="chat" aria-label="Assistant">
+    <header><button id="chat-back" type="button" class="ghost">← Lists</button><h2>Assistant</h2><button id="chat-new" type="button" class="ghost">New chat</button></header>
+    <p id="chat-status" role="status"></p>
+    <div id="chat-log" aria-live="polite"></div>
+    <form id="chat-form">
+      <input id="chat-input" placeholder="Ask about your lists…" aria-label="Message" maxlength="1000" autocomplete="off" required>
+      <button class="primary">Send</button>
+    </form>
+  </section>
   <div id="empty" hidden>
     <svg viewBox="0 0 24 24" width="48" height="48" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>
     <p>Nothing here yet.<br>Add your first item above.</p>

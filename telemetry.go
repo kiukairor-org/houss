@@ -153,6 +153,13 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Flush lets streamed responses (the assistant chat) through the tracing wrapper.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 type spanAttrsKey struct{}
 
 type spanAttrs struct {

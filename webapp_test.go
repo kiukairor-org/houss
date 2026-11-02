@@ -49,7 +49,7 @@ const el = () => new Proxy(function () {}, { get: () => el(), set: () => true, a
 const ctx = vm.createContext({
   document: { getElementById: el, querySelectorAll: () => [] },
   indexedDB: { open: () => ({}) },
-  navigator: {}, console, setInterval() {}, addEventListener() {}, AbortController, clearTimeout,
+  navigator: {}, console, setInterval() {}, addEventListener() {}, AbortController, clearTimeout, sessionStorage: { getItem: () => null, setItem() {} }, Intl,
   setTimeout: (f) => { if (globalThis.fireTimers) f(); return 0; },
 });
 vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx);
@@ -68,6 +68,13 @@ const ok = (body) => 'async () => ({ ok: true, json: async () => (' + JSON.strin
   assert.strictEqual(vm.runInContext('addedMessage([{}], true)', ctx), '✨ 1 item sorted by smart add');
   assert.match(vm.runInContext('addedMessage(null, true)', ctx), /^Added as typed/);
   assert.strictEqual(vm.runInContext('addedMessage(null, false)', ctx), ''); // LLM asleep: the placeholder already says so
+  // Chat: asleep vs unavailable, and "+ " lines become tap-to-add suggestions.
+  assert.strictEqual(vm.runInContext('chatStatusText({ enabled: true, available: true }, 21)', ctx), '');
+  assert.strictEqual(vm.runInContext('chatStatusText({ enabled: true, available: false }, 21)', ctx), 'Assistant is asleep (back at 07:00)');
+  assert.strictEqual(vm.runInContext('chatStatusText({ enabled: true, available: false }, 6)', ctx), 'Assistant is asleep (back at 07:00)');
+  assert.strictEqual(vm.runInContext('chatStatusText({ enabled: true, available: false }, 12)', ctx), 'Assistant unavailable right now');
+  assert.strictEqual(vm.runInContext('chatStatusText({ enabled: false, available: false }, 12)', ctx), 'The assistant is switched off.');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext('parseSuggestions("You could add:\\n+ eggs for tomorrow\\n  + appeler le plombier\\n1 + 1 = 2\\n+\\n")', ctx))), ['eggs for tomorrow', 'appeler le plombier']);
   globalThis.fireTimers = true; // the 6 s client timeout fires: a hanging request is abandoned
   assert.strictEqual(await run('(u, o) => new Promise((res, rej) => o.signal.aborted ? rej(new Error("aborted")) : o.signal.addEventListener("abort", () => rej(new Error("aborted"))))'), null);
 })().catch((e) => { console.error(e); process.exit(1); });
