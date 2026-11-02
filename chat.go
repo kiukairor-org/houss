@@ -93,8 +93,8 @@ func chatSystem(items []Item, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the assistant of houss, a shared household list app. Today is %s %s (London). "+
 		"Answer briefly and helpfully, in the language of the person's last message, using only the lists below; "+
-		"never invent items or dates. When you mention items already on the lists, write them as lines starting "+
-		"with \"- \". Only for NEW things worth adding that are not on the lists yet, write one per line starting "+
+		"never invent items or dates. When you mention items already on the lists, copy their names exactly as "+
+		"written (do not translate them), one per line starting with \"- \". Only for NEW things worth adding that are not on the lists yet, write one per line starting "+
 		"with \"+ \" (for example \"+ flour\"); the person can tap those to add them. You cannot change the lists "+
 		"yourself.\n\nThe household's lists, by due date ([Shopping] = to buy):\n", t.Weekday(), today)
 	for _, g := range groups {
