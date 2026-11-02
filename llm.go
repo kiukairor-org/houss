@@ -136,25 +136,27 @@ func (l *llmClient) chat(ctx context.Context, msgs []llmMsg, schema any, out any
 
 var quickSchema = map[string]any{"type": "object", "required": []string{"items"},
 	"properties": map[string]any{"items": map[string]any{"type": "array", "items": map[string]any{
-		"type": "object", "required": []string{"title", "list", "when"},
+		"type": "object", "required": []string{"title", "list", "when", "when_text"},
 		"properties": map[string]any{
-			"title": map[string]any{"type": "string"},
-			"list":  map[string]any{"type": "string", "enum": []string{"shopping", "todos", "midterm"}},
-			"when":  map[string]any{"type": "string", "enum": whenWords},
+			"title":     map[string]any{"type": "string"},
+			"list":      map[string]any{"type": "string", "enum": []string{"shopping", "todos", "midterm"}},
+			"when":      map[string]any{"type": "string", "enum": whenWords},
+			"when_text": map[string]any{"type": "string"},
 		}}}}}
 
 // The system prompt and examples never change, so the server can reuse its cache for them.
 const quickSystem = "You sort household quick-add notes for a shared list app. Split a note into separate items, " +
 	"one thing to buy or one task each. list is shopping (things to buy), todos (tasks, calls, appointments) or " +
 	"midterm (projects, repairs, anything with no hurry). when is the day the note gives for that item (today, " +
-	"tomorrow, a weekday, next_week, next_month), else empty. title is short, in the note's language, without the " +
-	"day words and without adding words like Buy. Use only things written in the note. Answer with compact one-line JSON."
+	"tomorrow, a weekday, next_week, next_month), else empty; when_text is the note's own words for that day, " +
+	"else empty. title is short, in the note's language, without the day words and without adding words like Buy. " +
+	"Use only things written in the note. Answer with compact one-line JSON."
 
 var quickExamples = []llmMsg{
 	{"user", "eggs and butter for tomorrow, call the plumber"},
-	{"assistant", `{"items":[{"title":"eggs","list":"shopping","when":"tomorrow"},{"title":"butter","list":"shopping","when":"tomorrow"},{"title":"call the plumber","list":"todos","when":""}]}`},
+	{"assistant", `{"items":[{"title":"eggs","list":"shopping","when":"tomorrow","when_text":"tomorrow"},{"title":"butter","list":"shopping","when":"tomorrow","when_text":"tomorrow"},{"title":"call the plumber","list":"todos","when":"","when_text":""}]}`},
 	{"user", "du pain et du beurre, sortir les poubelles ce soir, rappeler la banque vendredi, repeindre le salon"},
-	{"assistant", `{"items":[{"title":"pain","list":"shopping","when":""},{"title":"beurre","list":"shopping","when":""},{"title":"sortir les poubelles","list":"todos","when":"today"},{"title":"rappeler la banque","list":"todos","when":"friday"},{"title":"repeindre le salon","list":"midterm","when":""}]}`},
+	{"assistant", `{"items":[{"title":"pain","list":"shopping","when":"","when_text":""},{"title":"beurre","list":"shopping","when":"","when_text":""},{"title":"sortir les poubelles","list":"todos","when":"today","when_text":"ce soir"},{"title":"rappeler la banque","list":"todos","when":"friday","when_text":"vendredi"},{"title":"repeindre le salon","list":"midterm","when":"","when_text":""}]}`},
 }
 
 // QuickAdd turns a free-text note into items (title, tab, target date). Any error means the
