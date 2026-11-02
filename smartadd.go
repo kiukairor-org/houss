@@ -32,14 +32,16 @@ var whenWords = []string{"", "today", "tomorrow", "monday", "tuesday", "wednesda
 	"saturday", "sunday", "next_week", "next_month"}
 
 type quickItem struct {
-	Title string `json:"title"`
-	List  string `json:"list"`
-	When  string `json:"when"`
+	Title    string `json:"title"`
+	List     string `json:"list"`
+	When     string `json:"when"`
+	WhenText string `json:"when_text"` // the note's own words that gave the day ("tomoz", "ce soir")
 }
 
 // checkQuick accepts the model's answer only if it fits the app's real lists and loses nothing:
 // items made of words that are not in the note are dropped (small models echo the examples), and
-// every meaningful word of the note must end up in some title. Otherwise the whole answer is
+// every meaningful word of the note must end up in some title or in the day words the model turned
+// into a due date (when_text, so slang like "tomoz" counts as used). Otherwise the whole answer is
 // rejected and the note is added as typed.
 func checkQuick(note string, got []quickItem, now time.Time) ([]Item, error) {
 	if len(got) == 0 || len(got) > maxQuickItems {
@@ -52,6 +54,17 @@ func checkQuick(note string, got []quickItem, now time.Time) ([]Item, error) {
 		dated = dated || dayWords[w]
 	}
 	covered := map[string]bool{}
+	for _, q := range got {
+		ww := words(q.WhenText)
+		used := q.When != "" && len(ww) > 0
+		for _, w := range ww {
+			used = used && noteWords[w]
+		}
+		for _, w := range ww {
+			covered[w] = covered[w] || used
+		}
+		dated = dated || used
+	}
 	var out []Item
 	for _, q := range got {
 		title := strings.TrimSpace(q.Title)
@@ -62,7 +75,7 @@ func checkQuick(note string, got []quickItem, now time.Time) ([]Item, error) {
 		grounded, onlyDays := true, true
 		for _, w := range tw {
 			grounded = grounded && noteWords[w]
-			onlyDays = onlyDays && (dayWords[w] || fillerWords[w])
+			onlyDays = onlyDays && (dayWords[w] || fillerWords[w] || covered[w])
 		}
 		if !grounded || onlyDays { // invented, or just the day split off ("lundi prochain")
 			continue
@@ -98,7 +111,8 @@ func words(s string) []string {
 var dayWords = set("today", "tonight", "tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday",
 	"saturday", "sunday", "week", "weekend", "month", "morning", "afternoon", "evening",
 	"aujourd", "hui", "soir", "demain", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
-	"dimanche", "semaine", "mois", "matin", "midi")
+	"dimanche", "semaine", "mois", "matin", "midi",
+	"tomoz", "tomoro", "tomorow", "2moro", "2morrow", "tmrw", "tmr", "tonite", "2nite", "2day", "ajd", "auj", "dem1")
 
 // linkWords may be left out of titles ("milk and eggs" -> "milk", "eggs"; "acheter des piles" -> "piles").
 var linkWords = set("and", "also", "then", "the", "a", "an", "some", "of", "to", "at", "in", "with", "buy", "get", "need",

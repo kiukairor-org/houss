@@ -13,40 +13,65 @@ var monday = time.Date(2026, 11, 2, 18, 30, 0, 0, london)
 func TestCheckQuick(t *testing.T) {
 	// A day split off as its own item is dropped; a "today" on an undated note is ignored.
 	got, err := checkQuick("rappeler la banque lundi prochain", []quickItem{
-		{"rappeler la banque", "todos", "monday"}, {"lundi prochain", "shopping", ""}}, monday)
+		{"rappeler la banque", "todos", "monday", ""}, {"lundi prochain", "shopping", "", ""}}, monday)
 	if err != nil || len(got) != 1 || got[0].TargetDate != "2026-11-09" {
 		t.Fatalf("got %+v, %v", got, err)
 	}
-	got, err = checkQuick("acheter des piles", []quickItem{{"piles", "shopping", "today"}}, monday)
+	got, err = checkQuick("acheter des piles", []quickItem{{"piles", "shopping", "today", ""}}, monday)
 	if err != nil || len(got) != 1 || got[0].TargetDate != "" || got[0].Title != "piles" {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 	// An echoed example is dropped; the rest of the answer stands.
-	got, err = checkQuick("milk and eggs", []quickItem{{"milk", "shopping", ""}, {"eggs", "shopping", ""}, {"pain", "shopping", ""}}, monday)
+	got, err = checkQuick("milk and eggs", []quickItem{{"milk", "shopping", "", ""}, {"eggs", "shopping", "", ""}, {"pain", "shopping", "", ""}}, monday)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("echo: got %+v, %v", got, err)
 	}
 	// A clock time has no field; the day still sets the date.
-	got, err = checkQuick("dentist thursday 3pm", []quickItem{{"dentist", "todos", "thursday"}}, monday)
+	got, err = checkQuick("dentist thursday 3pm", []quickItem{{"dentist", "todos", "thursday", ""}}, monday)
 	if err != nil || len(got) != 1 || got[0].TargetDate != "2026-11-05" {
 		t.Fatalf("time: got %+v, %v", got, err)
 	}
 	// Vague time words ("this morning") still count as naming a day.
-	got, err = checkQuick("milk this morning", []quickItem{{"milk", "shopping", "today"}}, monday)
+	got, err = checkQuick("milk this morning", []quickItem{{"milk", "shopping", "today", ""}}, monday)
 	if err != nil || len(got) != 1 || got[0].TargetDate != "2026-11-02" {
 		t.Fatalf("vague: got %+v, %v", got, err)
 	}
+	// Slang day words the model turned into a date count as used (owner's "Eggs for tomoz", 2026-11-02).
+	for note, q := range map[string]quickItem{
+		"Eggs for tomoz":                {"eggs", "shopping", "tomorrow", "tomoz"},
+		"milk 2moro":                    {"milk", "shopping", "tomorrow", "2moro"},
+		"du pain demain":                {"pain", "shopping", "tomorrow", "demain"},
+		"eggs for tmrrw":                {"eggs", "shopping", "tomorrow", "tmrrw"}, // not in dayWords: when_text alone
+		"sortir les poubelles ce soir":  {"sortir les poubelles", "todos", "today", "ce soir"},
+		"appeler le garage jeudi matin": {"appeler le garage", "todos", "thursday", "jeudi matin"},
+	} {
+		got, err := checkQuick(note, []quickItem{q}, monday)
+		want, _ := resolveWhen(q.When, monday)
+		if err != nil || len(got) != 1 || got[0].TargetDate != want {
+			t.Errorf("%q: got %+v, %v", note, got, err)
+		}
+	}
+	// ...but only words that are in the note, and only for an item that got a date.
+	if _, err := checkQuick("eggs for tmrrw", []quickItem{{"eggs", "shopping", "tomorrow", "tomorrow"}}, monday); !errors.Is(err, errLLMOutput) {
+		t.Error("when_text not in the note must not cover tmrrw")
+	}
+	if _, err := checkQuick("eggs bacon", []quickItem{{"eggs", "shopping", "", "bacon"}}, monday); !errors.Is(err, errLLMOutput) {
+		t.Error("when_text without a date must not hide a lost word")
+	}
+	if _, err := checkQuick("Eggs for tomoz, call Bob", []quickItem{{"eggs", "shopping", "tomorrow", "tomoz"}}, monday); !errors.Is(err, errLLMOutput) {
+		t.Error("dropping 'call Bob' must still be rejected")
+	}
 	// Losing part of the note rejects the whole answer.
-	if _, err := checkQuick("milk, call mum", []quickItem{{"milk", "shopping", ""}}, monday); !errors.Is(err, errLLMOutput) {
+	if _, err := checkQuick("milk, call mum", []quickItem{{"milk", "shopping", "", ""}}, monday); !errors.Is(err, errLLMOutput) {
 		t.Fatal("dropped 'call mum' must be rejected")
 	}
 	if _, err := checkQuick("milk", nil, monday); !errors.Is(err, errLLMOutput) {
 		t.Fatal("no items must be rejected")
 	}
-	if _, err := checkQuick("milk", []quickItem{{"milk", "shopping", "someday"}}, monday); !errors.Is(err, errLLMOutput) {
+	if _, err := checkQuick("milk", []quickItem{{"milk", "shopping", "someday", ""}}, monday); !errors.Is(err, errLLMOutput) {
 		t.Fatal("unknown when must be rejected")
 	}
-	if _, err := checkQuick("milk", []quickItem{{strings.Repeat("milk ", 50), "shopping", ""}}, monday); !errors.Is(err, errLLMOutput) {
+	if _, err := checkQuick("milk", []quickItem{{strings.Repeat("milk ", 50), "shopping", "", ""}}, monday); !errors.Is(err, errLLMOutput) {
 		t.Fatal("over-long title must be rejected")
 	}
 }
