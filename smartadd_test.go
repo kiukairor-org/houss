@@ -31,6 +31,11 @@ func TestCheckQuick(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0].TargetDate != "2026-11-05" {
 		t.Fatalf("time: got %+v, %v", got, err)
 	}
+	// Vague time words ("this morning") still count as naming a day.
+	got, err = checkQuick("milk this morning", []quickItem{{"milk", "shopping", "today"}}, monday)
+	if err != nil || len(got) != 1 || got[0].TargetDate != "2026-11-02" {
+		t.Fatalf("vague: got %+v, %v", got, err)
+	}
 	// Losing part of the note rejects the whole answer.
 	if _, err := checkQuick("milk, call mum", []quickItem{{"milk", "shopping", ""}}, monday); !errors.Is(err, errLLMOutput) {
 		t.Fatal("dropped 'call mum' must be rejected")

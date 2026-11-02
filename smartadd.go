@@ -118,6 +118,9 @@ func set(ws ...string) map[string]bool {
 	return m
 }
 
+var weekdays = map[string]time.Weekday{"sunday": time.Sunday, "monday": time.Monday, "tuesday": time.Tuesday,
+	"wednesday": time.Wednesday, "thursday": time.Thursday, "friday": time.Friday, "saturday": time.Saturday}
+
 // resolveWhen turns the model's day word into a YYYY-MM-DD date in London. A weekday means its
 // next occurrence after today ("lundi prochain" said on a Monday is next week's Monday).
 func resolveWhen(when string, now time.Time) (string, bool) {
@@ -134,16 +137,11 @@ func resolveWhen(when string, now time.Time) (string, bool) {
 	case "next_month":
 		day = time.Date(t.Year(), t.Month()+1, 1, 12, 0, 0, 0, london)
 	default:
-		wd := -1
-		for i := time.Sunday; i <= time.Saturday; i++ {
-			if strings.ToLower(i.String()) == when {
-				wd = int(i)
-			}
-		}
-		if wd < 0 {
+		wd, ok := weekdays[when]
+		if !ok {
 			return "", false
 		}
-		ahead := (wd - int(day.Weekday()) + 7) % 7
+		ahead := (int(wd) - int(day.Weekday()) + 7) % 7
 		if ahead == 0 {
 			ahead = 7
 		}
