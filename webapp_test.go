@@ -41,3 +41,44 @@ func TestSyncErrorStatus(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
+
+// smartAdd must hand back null (= add the note as typed) on every kind of LLM trouble.
+const smartAddHarness = `
+const vm = require('vm'), fs = require('fs'), assert = require('assert');
+const el = () => new Proxy(function () {}, { get: () => el(), set: () => true, apply: () => el() });
+const ctx = vm.createContext({
+  document: { getElementById: el, querySelectorAll: () => [] },
+  indexedDB: { open: () => ({}) },
+  navigator: {}, console, setInterval() {}, addEventListener() {}, AbortController, clearTimeout,
+  setTimeout: (f) => { if (globalThis.fireTimers) f(); return 0; },
+});
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx);
+const run = (fetchImpl) => vm.runInContext('(async () => { fetch = ' + fetchImpl + '; return smartAdd("milk, call mum"); })()', ctx);
+const ok = (body) => 'async () => ({ ok: true, json: async () => (' + JSON.stringify(body) + ') })';
+(async () => {
+  assert.strictEqual(await run('async () => { throw new TypeError("offline") }'), null);
+  assert.strictEqual(await run('async () => ({ ok: false, status: 503 })'), null);
+  assert.strictEqual(await run(ok({ items: null, fallback: 'down' })), null);
+  assert.strictEqual(await run(ok({ items: [] })), null);
+  assert.strictEqual(await run('async () => ({ ok: true, json: async () => { throw new SyntaxError("x") } })'), null);
+  const items = await run(ok({ items: [{ title: 'milk', tab: 'shopping', target_date: '' }] }));
+  assert.strictEqual(items.length, 1);
+  assert.strictEqual(items[0].title, 'milk');
+  globalThis.fireTimers = true; // the 6 s client timeout fires: a hanging request is abandoned
+  assert.strictEqual(await run('(u, o) => new Promise((res, rej) => o.signal.aborted ? rej(new Error("aborted")) : o.signal.addEventListener("abort", () => rej(new Error("aborted"))))'), null);
+})().catch((e) => { console.error(e); process.exit(1); });
+`
+
+func TestSmartAddFallback(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	h := filepath.Join(t.TempDir(), "harness.js")
+	if err := os.WriteFile(h, []byte(smartAddHarness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, h, filepath.Join("web", "app.js")).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}

@@ -59,3 +59,4 @@ li .ghost { font-size: .85rem; }
 #empty svg { color: var(--accent); }
 #empty p { margin: var(--s3) 0 0; }
 [hidden] { display: none !important; }
+#add-form.busy .primary { opacity: .6; pointer-events: none; }

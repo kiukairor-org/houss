@@ -10,6 +10,8 @@ let tagFilter = null;
 let syncing = false;
 let prices = {}; // item id -> {status, ...} from /api/prices (last known; never blocks the list)
 let priceTotal = null;
+let smart = { enabled: false, available: false }; // smart add (shared LLM), from /api/llm
+let adding = false;
 
 // ---- IndexedDB ----
 const dbp = new Promise((resolve, reject) => {
@@ -50,11 +52,13 @@ function overlay(server, q) {
   return [...m.values()];
 }
 
-async function mutate(change) {
-  change.updated_at = Date.now();
-  await tx('queue', 'readwrite', (o) => o.add(change));
-  if (change.deleted) await tx('items', 'readwrite', (o) => o.delete(change.id));
-  else await tx('items', 'readwrite', (o) => o.put(change));
+async function mutate(...changes) {
+  for (const change of changes) {
+    change.updated_at = Date.now();
+    await tx('queue', 'readwrite', (o) => o.add(change));
+    if (change.deleted) await tx('items', 'readwrite', (o) => o.delete(change.id));
+    else await tx('items', 'readwrite', (o) => o.put(change));
+  }
   items = await idbAll('items');
   render();
   sync();
@@ -96,6 +100,7 @@ async function sync() {
     setStatus('');
     render();
     loadPrices();
+    loadSmart();
   } catch (e) {
     console.error('sync failed', e);
     setStatus(syncStatus(e));
@@ -226,6 +231,32 @@ async function loadPrices() {
   priceTimer = setTimeout(loadPrices, pending ? 5000 : 300000);
 }
 
+// ---- smart add ----
+// The shared LLM is off every night and may vanish at any time: everything here falls back to
+// adding the note exactly as typed, and the server sorts such notes later (needs_sort).
+async function loadSmart() {
+  try {
+    const res = await fetch('/api/llm');
+    if (res.ok) smart = await res.json();
+  } catch (e) { /* offline: keep the last known state */ }
+  $('title').placeholder = !smart.enabled ? 'Add item' : smart.available ? 'Add items, e.g. milk and eggs for tomorrow' : 'Add item (smart add unavailable)';
+}
+// Returns [{title, tab, target_date}] or null (= add the note as typed). Never waits more than 6 s.
+async function smartAdd(text) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 6000);
+  try {
+    const res = await fetch('/api/quickadd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }), signal: ctl.signal });
+    if (!res.ok) return null;
+    const d = await res.json();
+    return Array.isArray(d.items) && d.items.length ? d.items : null;
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---- screens ----
 function showLogin() { $('app').hidden = true; $('login').hidden = false; }
 function showApp() { $('login').hidden = true; $('app').hidden = false; }
@@ -260,11 +291,26 @@ $('tabs').onclick = (e) => {
   if (tab !== 'all') addTab = tab;
   render();
 };
-$('add-form').onsubmit = (e) => {
+$('add-form').onsubmit = async (e) => {
   e.preventDefault();
   const title = $('title').value.trim();
-  if (!title) return;
-  mutate({ id: newId(), title, tab: addTab, done: false, target_date: $('date').value });
+  if (!title || adding) return;
+  const date = $('date').value; // a date picked by hand always wins over the LLM's
+  let parsed = null;
+  if (smart.available) {
+    adding = true;
+    $('add-form').classList.add('busy');
+    parsed = await smartAdd(title);
+    $('add-form').classList.remove('busy');
+    adding = false;
+  }
+  if (parsed) {
+    await mutate(...parsed.map((p) => ({ id: newId(), title: p.title, tab: p.tab, done: false, target_date: date || p.target_date })));
+  } else {
+    const it = { id: newId(), title, tab: addTab, done: false, target_date: date };
+    if (smart.enabled) it.needs_sort = true;
+    await mutate(it);
+  }
   $('title').value = '';
   $('date').value = '';
 };

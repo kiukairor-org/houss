@@ -26,6 +26,11 @@ spec:
             # Secret "houss-secrets" (key: password) is created out of band; it is not stored in this repo.
             - name: HOUSS_PASSWORD
               valueFrom: {secretKeyRef: {name: houss-secrets, key: password}}
+            # Smart add through the shared LLM (homelab-gitops apps/ai). Off every night and spot-hosted:
+            # the app falls back to adding text as typed whenever it is unreachable.
+            - {name: LLM_ENABLED, value: "true"}
+            - {name: LLM_URL, value: "http://llm.ai.svc.cluster.local:11434"}
+            - {name: LLM_MODEL, value: "qwen3:1.7b"}
           volumeMounts: [{name: data, mountPath: /data}]
           resources:
             requests: {cpu: 10m, memory: 16Mi}
