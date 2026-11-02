@@ -24,6 +24,8 @@ type Item struct {
 	TargetDate string `json:"target_date"` // YYYY-MM-DD or ""
 	UpdatedAt  int64  `json:"updated_at"`  // unix milliseconds; the last-write-wins clock
 	Deleted    bool   `json:"deleted,omitempty"`
+	// NeedsSort marks a note added as typed while smart add was unavailable; see sorter.go.
+	NeedsSort bool `json:"needs_sort,omitempty"`
 }
 
 var errInvalid = errors.New("invalid item")
@@ -172,4 +174,46 @@ func (s *store) List(tab string) []Item {
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+// NeedsSort returns up to n live items still waiting for background sorting, oldest first.
+func (s *store) NeedsSort(n int) []Item {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Item
+	for _, it := range s.items {
+		if it.NeedsSort && !it.Deleted {
+			out = append(out, it)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt < out[j].UpdatedAt })
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
+}
+
+// FinishSort files a sorted item: it sets the tab (if given) and the due date (only when the item
+// has none) and clears NeedsSort. It changes nothing if the item was edited since it was read, so
+// a person's edit always wins; the next pass sees the new version.
+func (s *store) FinishSort(read Item, tab, due string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, ok := s.items[read.ID]
+	if !ok || cur.Deleted || !cur.NeedsSort || cur.UpdatedAt != read.UpdatedAt {
+		return false, nil
+	}
+	if tabs[tab] {
+		cur.Tab = tab
+	}
+	if cur.TargetDate == "" {
+		cur.TargetDate = due
+	}
+	cur.NeedsSort = false
+	cur.UpdatedAt = max(time.Now().UnixMilli(), cur.UpdatedAt+1)
+	if err := cur.normalize(); err != nil {
+		return false, err
+	}
+	s.items[cur.ID] = cur
+	return true, s.saveLocked()
 }

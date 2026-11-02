@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -85,6 +86,7 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 			apiErr(w, err)
 			return
 		}
+		s.sorter.Kick()
 		writeJSON(w, http.StatusCreated, res[0])
 	}))
 
@@ -124,7 +126,46 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 			apiErr(w, err)
 			return
 		}
+		s.sorter.Kick()
 		writeJSON(w, http.StatusOK, map[string]any{"items": s.store.List("")})
+	}))
+
+	// Smart add: whether to try it, so clients skip the wait while the LLM is down (e.g. at night).
+	mux.HandleFunc("GET /api/llm", a.require(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": s.llm != nil, "available": s.llm.Available()})
+	}))
+
+	// Smart add: split a free-text note into items. It never saves anything; the client adds the
+	// returned items, or the note as typed when "items" is null (LLM off, down, slow or nonsensical).
+	mux.HandleFunc("POST /api/quickadd", a.require(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if err := decodeBody(w, r, &body); err != nil || strings.TrimSpace(body.Text) == "" || len(body.Text) > 200 {
+			apiErr(w, errInvalid)
+			return
+		}
+		start := time.Now()
+		got, outcome := []Item(nil), "disabled"
+		if s.llm.Available() {
+			var err error
+			got, err = s.llm.QuickAdd(r.Context(), strings.TrimSpace(body.Text), start)
+			outcome = llmOutcome(err)
+		} else if s.llm != nil {
+			outcome = "unavailable"
+		}
+		ms := int(time.Since(start).Milliseconds())
+		addSpanAttr(r.Context(), strAttr("llm.outcome", outcome))
+		addSpanAttr(r.Context(), intAttr("llm.duration_ms", ms))
+		addSpanAttr(r.Context(), intAttr("llm.items", len(got)))
+		if s.llm != nil {
+			log.Printf("llm: quickadd outcome=%s duration_ms=%d items=%d", outcome, ms, len(got))
+		}
+		if outcome != "ok" {
+			writeJSON(w, http.StatusOK, map[string]any{"items": nil, "fallback": outcome})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": got})
 	}))
 
 	// Prices come from the server-side cache only; missing ones are fetched in the background,
@@ -144,4 +185,18 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"prices": out, "total": total, "priced": priced})
 	}))
+}
+
+// llmOutcome names a QuickAdd result for logs and spans.
+func llmOutcome(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, errLLMDown):
+		return "down"
+	default:
+		return "rejected"
+	}
 }

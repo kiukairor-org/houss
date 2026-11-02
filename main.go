@@ -26,6 +26,9 @@ type server struct {
 	prices *priceService
 	// tesco backs the debug endpoint; nil disables it.
 	tesco *tescoProvider
+	// llm backs smart add; nil when LLM_ENABLED is not "true". sorter is nil with it.
+	llm    *llmClient
+	sorter *sorter
 }
 
 func newMux(s *server) *http.ServeMux {
@@ -61,7 +64,13 @@ func main() {
 		log.Fatalf("open store: %v", err)
 	}
 	tesco := newTescoProvider()
-	s := &server{auth: newAuth(pw, os.Getenv("HOUSS_SESSION_SECRET")), store: st, prices: newPriceService(tesco), tesco: tesco}
+	s := &server{auth: newAuth(pw, os.Getenv("HOUSS_SESSION_SECRET")), store: st, prices: newPriceService(tesco), tesco: tesco, llm: newLLM()}
+	if s.llm != nil {
+		go s.llm.run()
+		s.sorter = newSorter(st, s.llm)
+		go s.sorter.run()
+		log.Printf("smart add: %s at %s", s.llm.model, s.llm.url)
+	}
 	tr := setupTracing() // OTLP traces to $OTEL_EXPORTER_OTLP_ENDPOINT (see telemetry.go)
 	srv := &http.Server{Addr: addr, Handler: tr.middleware(newMux(s)), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("%s %s listening on %s", appName(), version, addr)
