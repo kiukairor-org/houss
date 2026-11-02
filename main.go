@@ -29,6 +29,8 @@ type server struct {
 	// llm backs smart add; nil when LLM_ENABLED is not "true". sorter is nil with it.
 	llm    *llmClient
 	sorter *sorter
+	// chat rate-limits the assistant; created by registerAPI when nil.
+	chat *chatLimiter
 }
 
 func newMux(s *server) *http.ServeMux {

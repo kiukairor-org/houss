@@ -61,3 +61,21 @@ li .ghost { font-size: .85rem; }
 [hidden] { display: none !important; }
 #add-form.busy .primary { opacity: .6; pointer-events: none; }
 #toast { margin: 0 0 var(--s3); font-size: .85rem; color: var(--accent-text); }
+#chat-open { background: none; border-color: transparent; }
+#chat { display: none; flex-direction: column; gap: var(--s3); }
+#app.chatting > :not(header):not(#chat) { display: none !important; }
+#app.chatting #chat { display: flex; }
+#chat > header { justify-content: space-between; margin: 0; }
+#chat h2 { margin: 0; font-size: 1.1rem; color: var(--accent-text); }
+#chat .ghost { background: none; border-color: transparent; color: var(--accent-text); }
+#chat-status { margin: 0; color: var(--muted); font-size: .9rem; }
+#chat-status:empty { display: none; }
+#chat-log { display: flex; flex-direction: column; gap: var(--s2); min-height: 40vh; max-height: 62vh; overflow-y: auto; }
+.msg { max-width: 85%; padding: var(--s2) var(--s3); border-radius: 12px; overflow-wrap: anywhere; }
+.msg p { margin: 0; white-space: pre-wrap; }
+.msg.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
+.msg.assistant { align-self: flex-start; background: var(--card); border: 1px solid var(--line); }
+.msg.error { color: var(--muted); font-style: italic; }
+.suggest { display: block; width: 100%; margin-top: var(--s2); text-align: left; background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+#chat-form { display: flex; gap: var(--s2); }
+#chat-input { flex: 1; min-width: 0; }
