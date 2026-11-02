@@ -148,8 +148,9 @@ var quickSchema = map[string]any{"type": "object", "required": []string{"items"}
 const quickSystem = "You sort household quick-add notes for a shared list app. Split a note into separate items, " +
 	"one thing to buy or one task each. list is shopping (things to buy), todos (tasks, calls, appointments) or " +
 	"midterm (projects, repairs, anything with no hurry). when is the day the note gives for that item (today, " +
-	"tomorrow, a weekday, next_week, next_month), else empty; when_text is the note's own words for that day, else empty. title is short, in the note's language, without the " +
-	"day words and without adding words like Buy. Use only things written in the note. Answer with compact one-line JSON."
+	"tomorrow, a weekday, next_week, next_month), else empty; when_text is the note's own words for that day, " +
+	"else empty. title is short, in the note's language, without the day words and without adding words like Buy. " +
+	"Use only things written in the note. Answer with compact one-line JSON."
 
 var quickExamples = []llmMsg{
 	{"user", "eggs and butter for tomorrow, call the plumber"},

@@ -60,4 +60,3 @@ li .ghost { font-size: .85rem; }
 #empty p { margin: var(--s3) 0 0; }
 [hidden] { display: none !important; }
 #add-form.busy .primary { opacity: .6; pointer-events: none; }
-#toast { margin: 0 0 var(--s3); font-size: .85rem; color: var(--accent-text); }

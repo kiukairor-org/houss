@@ -257,20 +257,6 @@ async function smartAdd(text) {
   }
 }
 
-// The cue after Add: what smart add did, or why the note went in as typed.
-function addedMessage(parsed, tried) {
-  if (parsed) return '✨ ' + parsed.length + (parsed.length === 1 ? ' item' : ' items') + ' sorted by smart add';
-  return tried ? 'Added as typed (smart add couldn’t read this one)' : '';
-}
-let toastTimer = null;
-function showToast(text) {
-  if (!text) return;
-  $('toast').textContent = text;
-  $('toast').hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4000);
-}
-
 // ---- screens ----
 function showLogin() { $('app').hidden = true; $('login').hidden = false; }
 function showApp() { $('login').hidden = true; $('app').hidden = false; }
@@ -311,8 +297,7 @@ $('add-form').onsubmit = async (e) => {
   if (!title || adding) return;
   const date = $('date').value; // a date picked by hand always wins over the LLM's
   let parsed = null;
-  const tried = smart.available;
-  if (tried) {
+  if (smart.available) {
     adding = true;
     $('add-form').classList.add('busy');
     parsed = await smartAdd(title);
@@ -328,7 +313,6 @@ $('add-form').onsubmit = async (e) => {
   }
   $('title').value = '';
   $('date').value = '';
-  showToast(addedMessage(parsed, tried));
 };
 
 (async function init() {

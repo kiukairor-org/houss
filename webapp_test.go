@@ -64,10 +64,6 @@ const ok = (body) => 'async () => ({ ok: true, json: async () => (' + JSON.strin
   const items = await run(ok({ items: [{ title: 'milk', tab: 'shopping', target_date: '' }] }));
   assert.strictEqual(items.length, 1);
   assert.strictEqual(items[0].title, 'milk');
-  assert.strictEqual(vm.runInContext('addedMessage([{}, {}, {}], true)', ctx), '✨ 3 items sorted by smart add');
-  assert.strictEqual(vm.runInContext('addedMessage([{}], true)', ctx), '✨ 1 item sorted by smart add');
-  assert.match(vm.runInContext('addedMessage(null, true)', ctx), /^Added as typed/);
-  assert.strictEqual(vm.runInContext('addedMessage(null, false)', ctx), ''); // LLM asleep: the placeholder already says so
   globalThis.fireTimers = true; // the 6 s client timeout fires: a hanging request is abandoned
   assert.strictEqual(await run('(u, o) => new Promise((res, rej) => o.signal.aborted ? rej(new Error("aborted")) : o.signal.addEventListener("abort", () => rej(new Error("aborted"))))'), null);
 })().catch((e) => { console.error(e); process.exit(1); });
