@@ -86,6 +86,7 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 			apiErr(w, err)
 			return
 		}
+		s.sorter.Kick()
 		writeJSON(w, http.StatusCreated, res[0])
 	}))
 
@@ -125,6 +126,7 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 			apiErr(w, err)
 			return
 		}
+		s.sorter.Kick()
 		writeJSON(w, http.StatusOK, map[string]any{"items": s.store.List("")})
 	}))
 
