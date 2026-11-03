@@ -31,6 +31,9 @@ type server struct {
 	sorter *sorter
 	// chat rate-limits the assistant; created by registerAPI when nil.
 	chat *chatLimiter
+	// learn turns the purchase history into suggestions and a profile (learn.go); memory-only when
+	// created by registerAPI.
+	learn *learner
 }
 
 func newMux(s *server) *http.ServeMux {
@@ -73,6 +76,8 @@ func main() {
 		go s.sorter.run()
 		log.Printf("smart add: %s at %s", s.llm.model, s.llm.url)
 	}
+	s.learn = newLearner(os.Getenv("DATA_DIR"), st, s.llm)
+	go s.learn.run()
 	tr := setupTracing() // OTLP traces to $OTEL_EXPORTER_OTLP_ENDPOINT (see telemetry.go)
 	srv := &http.Server{Addr: addr, Handler: tr.middleware(newMux(s)), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("%s %s listening on %s", appName(), version, addr)

@@ -101,6 +101,7 @@ async function sync() {
     render();
     loadPrices();
     loadSmart();
+    loadSuggestions();
   } catch (e) {
     console.error('sync failed', e);
     setStatus(syncStatus(e));
@@ -189,6 +190,7 @@ function render() {
     li.append(edit, del);
     ul.append(li);
   });
+  renderSuggestions();
   const tot = $('total');
   tot.hidden = !(tab === 'shopping' && priceTotal !== null);
   if (!tot.hidden) tot.textContent = 'Total: £' + priceTotal.toFixed(2);
@@ -271,6 +273,84 @@ function showToast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { $('toast').hidden = true; }, 4000);
 }
+
+// ---- suggestions, learned from what the household ticks in Shopping ----
+// The server works them out (statistics, plus the shared LLM's picks when it is awake). They are
+// only shown: ➕ adds one like a typed item, ✕ dismisses it so houss learns to wait longer.
+let suggestions = [];
+function visibleSuggestions(list, its) {
+  const open = new Set(its.filter((i) => i.tab === 'shopping' && !i.done).map((i) => i.title.trim().toLowerCase()));
+  return list.filter((s) => !open.has(s.name.trim().toLowerCase()));
+}
+async function loadSuggestions() {
+  try {
+    const res = await fetch('/api/suggestions');
+    if (res.ok) { suggestions = (await res.json()).suggestions || []; renderSuggestions(); }
+  } catch (e) { /* offline: keep the last ones */ }
+}
+function renderSuggestions() {
+  const shown = tab === 'shopping' ? visibleSuggestions(suggestions, items) : [];
+  $('suggest').hidden = shown.length === 0;
+  const ul = $('suggest-list');
+  ul.replaceChildren();
+  shown.forEach((s) => {
+    const li = document.createElement('li');
+    const t = document.createElement('span');
+    t.className = 'title';
+    const meta = document.createElement('small');
+    meta.textContent = s.reason;
+    t.append(s.name, meta);
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.textContent = '➕';
+    add.setAttribute('aria-label', 'Add ' + s.name);
+    add.onclick = async () => {
+      suggestions = suggestions.filter((x) => x !== s);
+      await mutate({ id: newId(), title: s.name, tab: 'shopping', done: false, target_date: '' });
+      showToast('Added ' + s.name);
+    };
+    const no = document.createElement('button');
+    no.type = 'button';
+    no.textContent = '✕';
+    no.setAttribute('aria-label', 'Not now: ' + s.name);
+    no.onclick = () => {
+      suggestions = suggestions.filter((x) => x !== s);
+      renderSuggestions();
+      fetch('/api/suggestions/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: s.name }) }).catch(() => {});
+    };
+    li.append(t, add, no);
+    ul.append(li);
+  });
+}
+
+// "What houss knows about you": the learned profile, which the household can read, edit or clear.
+function profileMeta(d) {
+  if (!d.profile) return 'Nothing learned yet. houss learns from what you tick in Shopping; you can also write here yourself.';
+  return (d.edited ? 'Written by you' : 'Learned by houss') + ' · ' + new Date(d.updated_at).toLocaleString();
+}
+async function loadProfile() {
+  try {
+    const res = await fetch('/api/profile');
+    if (!res.ok) return;
+    const d = await res.json();
+    if (document.activeElement !== $('profile-text')) $('profile-text').value = d.profile;
+    $('profile-meta').textContent = profileMeta(d);
+  } catch (e) { $('profile-meta').textContent = 'Offline.'; }
+}
+async function saveProfile(text) {
+  const res = await fetch('/api/profile', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ profile: text }) }).catch(() => null);
+  if (!res || !res.ok) { $('profile-meta').textContent = res && res.status === 400 ? 'Too long: at most 12 lines of 200 characters.' : 'Could not save.'; return; }
+  const d = await res.json();
+  $('profile-text').value = d.profile;
+  $('profile-meta').textContent = profileMeta(d);
+}
+$('profile-save').onclick = () => saveProfile($('profile-text').value);
+$('profile-clear').onclick = () => { if (confirm('Forget everything houss has learned about you?')) saveProfile(''); };
+$('profile-refresh').onclick = async () => {
+  const res = await fetch('/api/learn/refresh', { method: 'POST' }).catch(() => null);
+  $('profile-meta').textContent = res && res.ok ? 'Re-learning… this takes about a minute.' : 'The assistant is asleep; houss re-learns every morning.';
+  if (res && res.ok) setTimeout(() => { loadProfile(); loadSuggestions(); }, 45000);
+};
 
 // ---- assistant chat ----
 // One streamed answer per message from /api/chat; the conversation lives in this tab only
@@ -355,7 +435,7 @@ async function sendChat(text) {
   saveChat();
   renderChat();
 }
-$('chat-open').onclick = () => { chatting = true; renderChat(); loadSmart(); };
+$('chat-open').onclick = () => { chatting = true; renderChat(); loadSmart(); loadProfile(); };
 $('chat-back').onclick = () => { chatting = false; renderChat(); };
 $('chat-new').onclick = () => { chatLog = []; saveChat(); renderChat(); };
 $('chat-form').onsubmit = (e) => {

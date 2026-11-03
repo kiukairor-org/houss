@@ -93,3 +93,36 @@ func TestSmartAddFallback(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
+
+// Suggestions already on the Shopping list are hidden; the profile view says who wrote it.
+const learnHarness = `
+const vm = require('vm'), fs = require('fs'), assert = require('assert');
+const el = () => new Proxy(function () {}, { get: () => el(), set: () => true, apply: () => el() });
+const ctx = vm.createContext({
+  document: { getElementById: el, querySelectorAll: () => [] },
+  indexedDB: { open: () => ({}) },
+  navigator: {}, console, setInterval() {}, addEventListener() {}, sessionStorage: { getItem: () => null, setItem() {} }, Intl,
+});
+vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), ctx);
+const js = (code) => JSON.parse(JSON.stringify(vm.runInContext(code, ctx)));
+const sugs = '[{name:"Milk",reason:"r"},{name:"Eggs",reason:"r"},{name:"Skyr",reason:"r"}]';
+const its = '[{title:"milk ",tab:"shopping",done:false},{title:"Eggs",tab:"shopping",done:true},{title:"Skyr",tab:"todos",done:false}]';
+assert.deepStrictEqual(js('visibleSuggestions(' + sugs + ', ' + its + ').map((s) => s.name)'), ['Eggs', 'Skyr']);
+assert.match(js('profileMeta({profile:"",updated_at:0,edited:false})'), /^Nothing learned yet/);
+assert.match(js('profileMeta({profile:"x",updated_at:1,edited:false})'), /^Learned by houss · /);
+assert.match(js('profileMeta({profile:"x",updated_at:1,edited:true})'), /^Written by you · /);
+`
+
+func TestLearnUI(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed")
+	}
+	h := filepath.Join(t.TempDir(), "harness.js")
+	if err := os.WriteFile(h, []byte(learnHarness), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(node, h, filepath.Join("web", "app.js")).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
