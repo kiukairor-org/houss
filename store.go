@@ -47,6 +47,10 @@ type store struct {
 	mu    sync.Mutex
 	path  string // "" = memory only
 	items map[string]Item
+	// Purchase history (history.go); hpath is "" when memory only.
+	hpath   string
+	history []Purchase
+	hdirty  bool
 }
 
 func openStore(dir string) (*store, error) {
@@ -58,27 +62,33 @@ func openStore(dir string) (*store, error) {
 		return nil, err
 	}
 	s.path = filepath.Join(dir, "houss.json")
+	s.hpath = filepath.Join(dir, "history.json")
 	b, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	var all []Item
-	if err := json.Unmarshal(b, &all); err != nil {
+	if err == nil {
+		var all []Item
+		if err := json.Unmarshal(b, &all); err != nil {
+			return nil, err
+		}
+		for _, it := range all {
+			s.items[it.ID] = it
+		}
+	}
+	if err := s.loadHistory(); err != nil {
 		return nil, err
 	}
-	for _, it := range all {
-		s.items[it.ID] = it
-	}
-	return s, nil
+	return s, s.saveHistoryLocked()
 }
 
 // saveLocked writes via temp file + rename so a crash never leaves a torn file.
 func (s *store) saveLocked() error {
 	if s.path == "" {
 		return nil
+	}
+	if err := s.saveHistoryLocked(); err != nil {
+		return err
 	}
 	all := make([]Item, 0, len(s.items))
 	for _, it := range s.items {
@@ -103,9 +113,11 @@ func (s *store) applyLocked(it Item) (Item, error) {
 	if it.UpdatedAt <= 0 {
 		it.UpdatedAt = time.Now().UnixMilli()
 	}
-	if cur, ok := s.items[it.ID]; ok && it.UpdatedAt < cur.UpdatedAt {
+	cur, ok := s.items[it.ID]
+	if ok && it.UpdatedAt < cur.UpdatedAt {
 		return cur, nil
 	}
+	s.recordLocked(cur, ok, it)
 	s.items[it.ID] = it
 	return it, nil
 }

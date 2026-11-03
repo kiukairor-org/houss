@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -128,6 +129,16 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		}
 		s.sorter.Kick()
 		writeJSON(w, http.StatusOK, map[string]any{"items": s.store.List("")})
+	}))
+
+	// Purchase history (history.go), newest first: ?since=<unix ms>&limit=<n, default 500>.
+	mux.HandleFunc("GET /api/history", a.require(func(w http.ResponseWriter, r *http.Request) {
+		since, _ := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
+		limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+		if err != nil || limit <= 0 || limit > historyMax {
+			limit = 500
+		}
+		writeJSON(w, http.StatusOK, s.store.History(since, limit))
 	}))
 
 	// Assistant chat (chat.go): one streamed answer per request, read-only.
