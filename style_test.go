@@ -65,6 +65,24 @@ func TestStylePurpleTheme(t *testing.T) {
 	}
 }
 
+// List items render as raised 3D boxes: layered shadow, hover lift, pressed state, no motion when reduced.
+func TestStyleItemBox(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("web", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(b)
+	for _, want := range []string{"box-shadow: var(--box-raised)", "#list li:hover {", "#list li:active {", "--box-hi:", "--box-edge:"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("style.css missing %q", want)
+		}
+	}
+	i := strings.Index(css, "@media (prefers-reduced-motion: reduce) { #list li")
+	if i < 0 || !strings.Contains(css[i:i+160], "transition: none") || !strings.Contains(css[i:i+160], "transform: none") {
+		t.Error("item hover/press motion must be disabled under prefers-reduced-motion")
+	}
+}
+
 // The page is a dry light purple (not white), the bottom edge matches it, and item controls are styled/SVG.
 func TestStyleLightPurpleAndControls(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("web", "style.css"))
