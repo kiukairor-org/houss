@@ -38,11 +38,25 @@
     </label>
   </form>
   <p id="toast" role="status" hidden></p>
+  <section id="suggest" aria-label="Running low?" hidden>
+    <h2>Running low?</h2>
+    <ul id="suggest-list"></ul>
+  </section>
   <p id="total" hidden></p>
   <ul id="list"></ul>
   <section id="chat" aria-label="Assistant">
     <header><button id="chat-back" type="button" class="ghost">← Lists</button><h2>Assistant</h2><button id="chat-new" type="button" class="ghost">New chat</button></header>
     <p id="chat-status" role="status"></p>
+    <details id="profile">
+      <summary>What houss knows about you</summary>
+      <p id="profile-meta"></p>
+      <textarea id="profile-text" rows="8" aria-label="What houss knows about you"></textarea>
+      <div class="row">
+        <button id="profile-save" type="button" class="primary">Save</button>
+        <button id="profile-refresh" type="button" class="ghost">Re-learn now</button>
+        <button id="profile-clear" type="button" class="ghost">Clear</button>
+      </div>
+    </details>
     <div id="chat-log" aria-live="polite"></div>
     <form id="chat-form">
       <input id="chat-input" placeholder="Ask about your lists…" aria-label="Message" maxlength="1000" autocomplete="off" required>

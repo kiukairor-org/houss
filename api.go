@@ -141,6 +141,54 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, s.store.History(since, limit))
 	}))
 
+	// Learned buying patterns (learn.go): suggestions above the Shopping list and the profile.
+	if s.learn == nil {
+		s.learn = newLearner("", s.store, s.llm)
+	}
+	mux.HandleFunc("GET /api/suggestions", a.require(func(w http.ResponseWriter, r *http.Request) {
+		src, list := s.learn.Suggestions(time.Now())
+		writeJSON(w, http.StatusOK, map[string]any{"source": src, "suggestions": list})
+	}))
+	mux.HandleFunc("POST /api/suggestions/dismiss", a.require(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err := decodeBody(w, r, &body); err != nil || strings.TrimSpace(body.Name) == "" || len(body.Name) > 200 {
+			apiErr(w, errInvalid)
+			return
+		}
+		s.learn.Dismiss(strings.TrimSpace(body.Name), time.Now())
+		writeJSON(w, http.StatusOK, map[string]bool{"dismissed": true})
+	}))
+	mux.HandleFunc("GET /api/profile", a.require(func(w http.ResponseWriter, r *http.Request) {
+		p, at, edited := s.learn.Profile()
+		writeJSON(w, http.StatusOK, map[string]any{"profile": p, "updated_at": at, "edited": edited})
+	}))
+	mux.HandleFunc("PUT /api/profile", a.require(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Profile string `json:"profile"`
+		}
+		if err := decodeBody(w, r, &body); err != nil {
+			apiErr(w, errInvalid)
+			return
+		}
+		if err := s.learn.SetProfile(body.Profile, time.Now()); err != nil {
+			apiErr(w, err)
+			return
+		}
+		p, at, edited := s.learn.Profile()
+		writeJSON(w, http.StatusOK, map[string]any{"profile": p, "updated_at": at, "edited": edited})
+	}))
+	// Re-learns now (profile and suggestions) instead of waiting for the morning run.
+	mux.HandleFunc("POST /api/learn/refresh", a.require(func(w http.ResponseWriter, r *http.Request) {
+		if !s.llm.Available() {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "unavailable"})
+			return
+		}
+		s.learn.Refresh()
+		writeJSON(w, http.StatusAccepted, map[string]bool{"started": true})
+	}))
+
 	// Assistant chat (chat.go): one streamed answer per request, read-only.
 	if s.chat == nil {
 		s.chat = newChatLimiter()

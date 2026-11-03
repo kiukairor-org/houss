@@ -266,7 +266,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
-	msgs := []llmMsg{{"system", chatSystem(s.store.List(""), time.Now())}}
+	msgs := []llmMsg{{"system", chatSystem(s.store.List(""), time.Now()) + s.learn.chatContext()}}
 	for _, m := range trimHistory(body.Messages) {
 		msgs = append(msgs, llmMsg{m.Role, m.Content})
 	}

@@ -79,3 +79,14 @@ li .ghost { font-size: .85rem; }
 .suggest { display: block; width: 100%; margin-top: var(--s2); text-align: left; background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
 #chat-form { display: flex; gap: var(--s2); }
 #chat-input { flex: 1; min-width: 0; }
+#suggest { margin: 0 0 var(--s3); padding: var(--s2) var(--s3); border-radius: var(--r); background: var(--accent-soft); }
+#suggest h2 { margin: 0 0 var(--s1); font-size: .9rem; color: var(--accent-text); }
+#suggest-list { list-style: none; margin: 0; padding: 0; }
+#suggest-list li { display: flex; align-items: center; gap: var(--s2); }
+#suggest-list .title small { display: block; font-size: .75rem; color: var(--muted); }
+#suggest-list button { min-width: 44px; background: none; border-color: transparent; color: var(--accent-text); }
+#profile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: var(--s2) var(--s3); }
+#profile summary { cursor: pointer; color: var(--accent-text); font-weight: 600; min-height: 32px; }
+#profile p { margin: var(--s2) 0; font-size: .8rem; color: var(--muted); }
+#profile textarea { width: 100%; font: inherit; font-size: .9rem; padding: var(--s2); border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
+#profile .row { display: flex; gap: var(--s2); flex-wrap: wrap; margin-top: var(--s2); }

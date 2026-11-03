@@ -51,6 +51,14 @@ type store struct {
 	hpath   string
 	history []Purchase
 	hdirty  bool
+	rev     int64 // bumped on every change, so readers can tell the lists changed
+}
+
+// Rev is a counter that changes whenever an item or the history does.
+func (s *store) Rev() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rev
 }
 
 func openStore(dir string) (*store, error) {
@@ -119,6 +127,7 @@ func (s *store) applyLocked(it Item) (Item, error) {
 	}
 	s.recordLocked(cur, ok, it)
 	s.items[it.ID] = it
+	s.rev++
 	return it, nil
 }
 
@@ -159,6 +168,7 @@ func (s *store) Delete(id string, ts int64) error {
 	}
 	cur.Deleted, cur.UpdatedAt = true, ts
 	s.items[id] = cur
+	s.rev++
 	return s.saveLocked()
 }
 
@@ -227,5 +237,6 @@ func (s *store) FinishSort(read Item, tab, due string) (bool, error) {
 		return false, err
 	}
 	s.items[cur.ID] = cur
+	s.rev++
 	return true, s.saveLocked()
 }
