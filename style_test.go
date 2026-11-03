@@ -64,3 +64,37 @@ func TestStylePurpleTheme(t *testing.T) {
 		}
 	}
 }
+
+// The page is a dry light purple (not white), the bottom edge matches it, and item controls are styled/SVG.
+func TestStyleLightPurpleAndControls(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("web", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := strings.ToLower(string(b))
+	if !strings.Contains(css, "--bg: #ece3f4;") {
+		t.Error("page background must be light purple")
+	}
+	if !strings.Contains(css, "html { background: var(--bg)") {
+		t.Error("html element must carry the page background so no strip shows at the bottom")
+	}
+	if !strings.Contains(css, "appearance: none") || !strings.Contains(css, "input[type=checkbox]:checked::before") {
+		t.Error("checkboxes need a custom checked tick")
+	}
+	m, err := os.ReadFile(filepath.Join("web", "manifest.webmanifest"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(string(m)), `"background_color": "#ece3f4"`) {
+		t.Error("manifest background_color must match the page background")
+	}
+	js, err := os.ReadFile(filepath.Join("web", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ICON_EDIT", "ICON_DELETE", "setAttribute('aria-label', 'Edit')", "setAttribute('aria-label', 'Delete')"} {
+		if !strings.Contains(string(js), want) {
+			t.Errorf("app.js missing %s", want)
+		}
+	}
+}
