@@ -173,8 +173,9 @@ function render() {
     }
     const edit = document.createElement('button');
     edit.type = 'button';
-    edit.textContent = 'Edit';
-    edit.className = 'ghost';
+    edit.className = 'icon-btn';
+    edit.innerHTML = ICON_EDIT;
+    edit.setAttribute('aria-label', 'Edit');
     edit.onclick = () => {
       const t = prompt('Title', it.title);
       if (t === null || !t.trim()) return;
@@ -184,7 +185,8 @@ function render() {
     };
     const del = document.createElement('button');
     del.type = 'button';
-    del.textContent = '✕';
+    del.className = 'icon-btn danger';
+    del.innerHTML = ICON_DELETE;
     del.setAttribute('aria-label', 'Delete');
     del.onclick = () => mutate({ ...it, deleted: true });
     li.append(edit, del);
@@ -195,6 +197,10 @@ function render() {
   tot.hidden = !(tab === 'shopping' && priceTotal !== null);
   if (!tot.hidden) tot.textContent = 'Total: £' + priceTotal.toFixed(2);
 }
+
+// Static inline SVGs (no user input) for the item action buttons.
+const ICON_EDIT = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const ICON_DELETE = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 10v6M14 10v6"/></svg>';
 
 function age(ms) {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
