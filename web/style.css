@@ -1,20 +1,20 @@
 /* Design tokens: every colour, radius and shadow used below comes from here. Light only. */
 :root {
-  --mint-50: #effaf5; --mint-100: #dcf4ea; --mint-300: #8fdcc0; --mint-500: #3cc79a; --mint-700: #0f6b4f;
-  --bg: #f6faf8; --card: #fdfefd; --surface: #fbfdfc; --text: #1b2a24; --muted: #54655d; --line: #e4ece8;
-  --accent: var(--mint-500); --on-accent: #0b2a1f; --accent-soft: var(--mint-100); --accent-text: var(--mint-700);
-  --glow: rgb(60 199 154 / .35);
+  --purple-50: #f7f0f9; --purple-100: #efe3f3; --purple-300: #c9a3d4; --purple-400: #9a5aa9; --purple-900: #35063e;
+  --bg: #faf6fb; --card: #fffdff; --surface: #fcf9fd; --text: #24142a; --muted: #66586b; --line: #eadff0;
+  --accent: var(--purple-900); --on-accent: #fff; --accent-soft: var(--purple-100); --accent-text: var(--purple-900);
+  --glow: rgb(154 90 169 / .35);
   --success: #1f8a5f; --success-bg: #e3f6ed;
   --warning: #8a5a00; --warning-bg: #fff4d9;
   --error: #b3261e; --error-bg: #fdeceb;
   --over: var(--error); --over-bg: var(--error-bg); --soon: var(--warning); --soon-bg: var(--warning-bg);
   --r-sm: 12px; --r: 20px; --r-lg: 28px; --r-pill: 999px;
-  --shadow-1: 0 1px 2px rgb(40 70 58 / .06);
-  --shadow-2: 0 2px 6px rgb(40 70 58 / .07), 0 1px 2px rgb(40 70 58 / .04);
-  --shadow-3: 0 6px 16px rgb(40 70 58 / .08), 0 2px 4px rgb(40 70 58 / .04);
-  --shadow-4: 0 12px 28px rgb(40 70 58 / .10), 0 4px 8px rgb(40 70 58 / .05);
-  --shadow-5: 0 20px 44px rgb(40 70 58 / .14), 0 8px 16px rgb(40 70 58 / .06);
-  --inset: inset 0 2px 4px rgb(40 70 58 / .08);
+  --shadow-1: 0 1px 2px rgb(53 6 62 / .06);
+  --shadow-2: 0 2px 6px rgb(53 6 62 / .07), 0 1px 2px rgb(53 6 62 / .04);
+  --shadow-3: 0 6px 16px rgb(53 6 62 / .08), 0 2px 4px rgb(53 6 62 / .04);
+  --shadow-4: 0 12px 28px rgb(53 6 62 / .10), 0 4px 8px rgb(53 6 62 / .05);
+  --shadow-5: 0 20px 44px rgb(53 6 62 / .14), 0 8px 16px rgb(53 6 62 / .06);
+  --inset: inset 0 2px 4px rgb(53 6 62 / .08);
   --s1: .25rem; --s2: .5rem; --s3: .75rem; --s4: 1.25rem;
 }
 * { box-sizing: border-box; }

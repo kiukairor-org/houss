@@ -36,3 +36,31 @@ func TestStyleTokens(t *testing.T) {
 		t.Error("pill radius token unused")
 	}
 }
+
+// The accent is the purple #35063E with white text on it, and no mint/green accent remains.
+func TestStylePurpleTheme(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("web", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := strings.ToLower(string(b))
+	if !strings.Contains(css, "--purple-900: #35063e") || !strings.Contains(css, "--accent: var(--purple-900)") {
+		t.Error("accent must be #35063E")
+	}
+	if !strings.Contains(css, "--on-accent: #fff;") {
+		t.Error("text on the accent must be white")
+	}
+	if strings.Contains(css, "mint") || strings.Contains(css, "60 199 154") {
+		t.Error("mint accent remains in style.css")
+	}
+	for _, f := range []string{"index.html", "manifest.webmanifest"} {
+		h, err := os.ReadFile(filepath.Join("web", f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := strings.ToLower(string(h))
+		if strings.Contains(s, "3cc79a") || !strings.Contains(s, "#35063e") {
+			t.Errorf("%s theme colour must be #35063E", f)
+		}
+	}
+}

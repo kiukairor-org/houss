@@ -67,10 +67,10 @@ func serveIcon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// renderIcon draws a white house on a green square, full-bleed so it is safe as a maskable icon
+// renderIcon draws a white house on a purple square, full-bleed so it is safe as a maskable icon
 // (the house stays inside the central 60%).
 func renderIcon(n int) []byte {
-	bg, fg := color.RGBA{0x2e, 0x7d, 0x32, 0xff}, color.RGBA{0xff, 0xff, 0xff, 0xff}
+	bg, fg := color.RGBA{0x35, 0x06, 0x3e, 0xff}, color.RGBA{0xff, 0xff, 0xff, 0xff}
 	img := image.NewRGBA(image.Rect(0, 0, n, n))
 	f := float64(n)
 	for y := 0; y < n; y++ {
