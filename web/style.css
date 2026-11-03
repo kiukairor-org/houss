@@ -15,6 +15,10 @@
   --shadow-4: 0 12px 28px rgb(53 6 62 / .10), 0 4px 8px rgb(53 6 62 / .05);
   --shadow-5: 0 20px 44px rgb(53 6 62 / .14), 0 8px 16px rgb(53 6 62 / .06);
   --inset: inset 0 2px 4px rgb(53 6 62 / .08);
+  --box-hi: inset 0 1px 0 rgb(255 255 255 / .9); --box-edge: inset 0 -4px 0 rgb(53 6 62 / .12);
+  --box-raised: var(--box-hi), var(--box-edge), 0 2px 3px rgb(53 6 62 / .10), 0 8px 16px rgb(53 6 62 / .08);
+  --box-lift: var(--box-hi), var(--box-edge), 0 4px 6px rgb(53 6 62 / .10), 0 14px 24px rgb(53 6 62 / .12);
+  --box-press: inset 0 2px 3px rgb(53 6 62 / .14), inset 0 -1px 0 rgb(53 6 62 / .12), 0 1px 1px rgb(53 6 62 / .08);
   --s1: .25rem; --s2: .5rem; --s3: .75rem; --s4: 1.25rem;
 }
 * { box-sizing: border-box; }
@@ -54,7 +58,10 @@ input:focus-visible, select:focus-visible { outline: none; }
 #add-form label input { flex: 1; min-width: 0; font-size: .9rem; color: var(--text); }
 #add-form .primary { padding: 0 var(--s4); }
 #list { list-style: none; margin: 0; padding: 0; }
-#list li { display: flex; align-items: center; gap: var(--s3); background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: var(--s2) var(--s2) var(--s2) var(--s4); margin-bottom: var(--s3); box-shadow: var(--shadow-3); }
+#list li { display: flex; align-items: center; gap: var(--s3); background: var(--card); border: 1px solid var(--line); border-radius: var(--r); padding: var(--s2) var(--s2) var(--s2) var(--s4); margin-bottom: var(--s3); box-shadow: var(--box-raised); transition: transform .15s, box-shadow .15s; }
+#list li:hover { transform: translateY(-2px); box-shadow: var(--box-lift); }
+#list li:active { transform: translateY(1px); box-shadow: var(--box-press); }
+@media (prefers-reduced-motion: reduce) { #list li { transition: none; } #list li:hover, #list li:active { transform: none; } }
 #list li.overdue { border-color: var(--error); background: var(--over-bg); }
 #list li.soon { border-color: var(--warning); background: var(--soon-bg); }
 #list li.done .title { text-decoration: line-through; color: var(--muted); }
