@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -187,7 +189,7 @@ func TestSyncLastWriteWins(t *testing.T) {
 
 func TestAppShellPublic(t *testing.T) {
 	h := newMux(testServer(t))
-	for _, p := range []string{"/app.js", "/style.css", "/sw.js", "/manifest.webmanifest", "/icons/192.png", "/icons/512.png", "/icons/180.png"} {
+	for _, p := range []string{"/app.js", "/style.css", "/sw.js", "/manifest.webmanifest", "/icons/192.png", "/icons/512.png", "/icons/180.png", "/icons/maskable-512.png"} {
 		if rec := do(t, h, "GET", p, "", nil); rec.Code != 200 || rec.Body.Len() == 0 {
 			t.Fatalf("%s: %d", p, rec.Code)
 		}
@@ -199,6 +201,47 @@ func TestAppShellPublic(t *testing.T) {
 	_ = json.Unmarshal(do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.Bytes(), &m)
 	if len(m.Icons) < 2 {
 		t.Fatalf("manifest icons: %v", m)
+	}
+}
+
+func TestIconsArePurpleAndMaskableIsFullBleed(t *testing.T) {
+	h := newMux(testServer(t))
+	decode := func(p string) image.Image {
+		img, err := png.Decode(do(t, h, "GET", p, "", nil).Body)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		return img
+	}
+	for _, p := range []string{"/icons/192.png", "/icons/512.png", "/icons/maskable-512.png"} {
+		img := decode(p)
+		b := img.Bounds()
+		r, g, bl, _ := img.At(b.Dx()/2, b.Dy()*9/10).RGBA() // background below the house
+		if g >= r || g >= bl {
+			t.Fatalf("%s background not purple: %d %d %d", p, r, g, bl)
+		}
+	}
+	if _, _, _, a := decode("/icons/maskable-512.png").At(0, 0).RGBA(); a != 0xffff {
+		t.Fatal("maskable icon must be full-bleed")
+	}
+	if _, _, _, a := decode("/icons/512.png").At(0, 0).RGBA(); a != 0 {
+		t.Fatal("regular icon should have transparent rounded corners")
+	}
+	var m struct {
+		Icons []struct{ Src, Purpose string }
+	}
+	_ = json.Unmarshal(do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.Bytes(), &m)
+	found := false
+	for _, ic := range m.Icons {
+		if ic.Purpose == "maskable" && ic.Src == "/icons/maskable-512.png" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("manifest lacks maskable icon: %v", m)
+	}
+	if sw := do(t, h, "GET", "/sw.js", "", nil).Body.String(); strings.Contains(sw, "shell-v5") {
+		t.Fatal("service worker cache version not bumped")
 	}
 }
 

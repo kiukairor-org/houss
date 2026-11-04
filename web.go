@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"net/http"
 	"sync"
 )
@@ -44,22 +45,33 @@ func registerStatic(mux *http.ServeMux) {
 
 var (
 	iconMu    sync.Mutex
-	iconCache = map[int][]byte{}
+	iconCache = map[string][]byte{}
 )
 
-var iconSizes = map[string]int{"180.png": 180, "192.png": 192, "512.png": 512}
+type iconSpec struct {
+	size     int
+	maskable bool
+}
+
+var iconSpecs = map[string]iconSpec{
+	"180.png":          {180, false},
+	"192.png":          {192, false},
+	"512.png":          {512, false},
+	"maskable-512.png": {512, true},
+}
 
 func serveIcon(w http.ResponseWriter, r *http.Request) {
-	size, ok := iconSizes[r.PathValue("size")]
+	name := r.PathValue("size")
+	spec, ok := iconSpecs[name]
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	iconMu.Lock()
-	b, ok := iconCache[size]
+	b, ok := iconCache[name]
 	if !ok {
-		b = renderIcon(size)
-		iconCache[size] = b
+		b = renderIcon(spec.size, spec.maskable)
+		iconCache[name] = b
 	}
 	iconMu.Unlock()
 	w.Header().Set("Content-Type", "image/png")
@@ -67,31 +79,63 @@ func serveIcon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// renderIcon draws a white house on a purple square, full-bleed so it is safe as a maskable icon
-// (the house stays inside the central 60%).
-func renderIcon(n int) []byte {
-	bg, fg := color.RGBA{0x35, 0x06, 0x3e, 0xff}, color.RGBA{0xff, 0xff, 0xff, 0xff}
-	img := image.NewRGBA(image.Rect(0, 0, n, n))
-	f := float64(n)
-	for y := 0; y < n; y++ {
-		for x := 0; x < n; x++ {
-			u, v := float64(x)/f, float64(y)/f
-			c := bg
-			// roof: triangle apex (0.5,0.22), base y=0.5 from x 0.2..0.8
-			if v >= 0.22 && v <= 0.5 {
-				half := 0.3 * (v - 0.22) / 0.28
-				if u >= 0.5-half && u <= 0.5+half {
-					c = fg
+// distSeg is the distance from (px,py) to the segment a-b.
+func distSeg(px, py, ax, ay, bx, by float64) float64 {
+	dx, dy := bx-ax, by-ay
+	t := math.Max(0, math.Min(1, ((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy)))
+	return math.Hypot(px-(ax+t*dx), py-(ay+t*dy))
+}
+
+// markAt reports whether the centred point (x,y) (unit square, origin in the middle) lies on the
+// house, and whether it lies on the check mark cut out of the house body.
+func markAt(x, y float64) (house, check bool) {
+	roof := y >= -0.30 && y <= -0.02 && math.Abs(x) <= 0.32*(y+0.30)/0.28
+	body := y > -0.02 && y <= 0.26 && math.Abs(x) <= 0.24
+	if !roof && !body {
+		return false, false
+	}
+	check = distSeg(x, y, -0.11, 0.12, -0.03, 0.20) < 0.035 || distSeg(x, y, -0.03, 0.20, 0.12, 0.04) < 0.035
+	return true, check
+}
+
+// renderIcon draws a light house with a check mark on a purple gradient. The mark stays inside the
+// central 60% so the full-bleed maskable variant survives any mask; the regular variant has
+// rounded transparent corners and a slightly larger mark.
+func renderIcon(n int, maskable bool) []byte {
+	const ss = 3
+	top := [3]float64{0x7a, 0x2f, 0x9c}
+	bot := [3]float64{0x35, 0x06, 0x3e}
+	light := [3]float64{0xec, 0xe3, 0xf4}
+	scale := 1.0
+	if !maskable {
+		scale = 1.12
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, n, n))
+	f := float64(n * ss)
+	for py := 0; py < n; py++ {
+		for px := 0; px < n; px++ {
+			var r, g, b, a float64
+			for sy := 0; sy < ss; sy++ {
+				for sx := 0; sx < ss; sx++ {
+					u, v := (float64(px*ss+sx)+0.5)/f, (float64(py*ss+sy)+0.5)/f
+					if !maskable {
+						// rounded-square coverage, corner radius 0.22
+						cx, cy := math.Max(math.Abs(u-0.5)-0.28, 0), math.Max(math.Abs(v-0.5)-0.28, 0)
+						if math.Hypot(cx, cy) > 0.22 {
+							continue
+						}
+					}
+					t := (u + v) / 2 // diagonal gradient
+					c := [3]float64{top[0] + (bot[0]-top[0])*t, top[1] + (bot[1]-top[1])*t, top[2] + (bot[2]-top[2])*t}
+					if house, check := markAt((u-0.5)/scale, (v-0.5)/scale); house && !check {
+						c = light
+					}
+					r, g, b, a = r+c[0], g+c[1], b+c[2], a+1
 				}
 			}
-			// body, with a door cut-out
-			if v > 0.5 && v <= 0.76 && u >= 0.3 && u <= 0.7 {
-				c = fg
-				if v > 0.6 && u >= 0.45 && u <= 0.55 {
-					c = bg
-				}
+			if a > 0 {
+				img.SetNRGBA(px, py, color.NRGBA{uint8(r / a), uint8(g / a), uint8(b / a), uint8(255 * a / (ss * ss))})
 			}
-			img.SetRGBA(x, y, c)
 		}
 	}
 	var buf bytes.Buffer
