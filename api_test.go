@@ -2,10 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -189,13 +194,16 @@ func TestSyncLastWriteWins(t *testing.T) {
 
 func TestAppShellPublic(t *testing.T) {
 	h := newMux(testServer(t))
-	for _, p := range []string{"/app.js", "/style.css", "/sw.js", "/manifest.webmanifest", "/icons/192.png", "/icons/512.png", "/icons/180.png", "/icons/maskable-512.png"} {
+	for _, p := range []string{"/app.js", "/style.css", "/sw.js", "/manifest.webmanifest", "/icons/icon.svg", "/icons/favicon-32.png", "/icons/apple-touch-180.png", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png"} {
 		if rec := do(t, h, "GET", p, "", nil); rec.Code != 200 || rec.Body.Len() == 0 {
 			t.Fatalf("%s: %d", p, rec.Code)
 		}
 	}
-	if rec := do(t, h, "GET", "/icons/999.png", "", nil); rec.Code != 404 {
-		t.Fatalf("got %d", rec.Code)
+	// the previous house icons are gone
+	for _, p := range []string{"/icons/999.png", "/icons/192.png", "/icons/512.png", "/icons/180.png", "/icons/maskable-512.png"} {
+		if rec := do(t, h, "GET", p, "", nil); rec.Code != 404 {
+			t.Fatalf("%s: got %d", p, rec.Code)
+		}
 	}
 	var m struct{ Icons []struct{ Sizes string } }
 	_ = json.Unmarshal(do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.Bytes(), &m)
@@ -213,35 +221,87 @@ func TestIconsArePurpleAndMaskableIsFullBleed(t *testing.T) {
 		}
 		return img
 	}
-	for _, p := range []string{"/icons/192.png", "/icons/512.png", "/icons/maskable-512.png"} {
+	for _, p := range []string{"/icons/favicon-32.png", "/icons/apple-touch-180.png", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png"} {
 		img := decode(p)
 		b := img.Bounds()
-		r, g, bl, _ := img.At(b.Dx()/2, b.Dy()*9/10).RGBA() // background below the house
+		r, g, bl, _ := img.At(b.Dx()/2, b.Dy()*95/100).RGBA() // background below the mark
 		if g >= r || g >= bl {
 			t.Fatalf("%s background not purple: %d %d %d", p, r, g, bl)
 		}
 	}
-	if _, _, _, a := decode("/icons/maskable-512.png").At(0, 0).RGBA(); a != 0xffff {
+	if _, _, _, a := decode("/icons/icon-maskable-512.png").At(0, 0).RGBA(); a != 0xffff {
 		t.Fatal("maskable icon must be full-bleed")
 	}
-	if _, _, _, a := decode("/icons/512.png").At(0, 0).RGBA(); a != 0 {
+	if _, _, _, a := decode("/icons/icon-512.png").At(0, 0).RGBA(); a != 0 {
 		t.Fatal("regular icon should have transparent rounded corners")
 	}
+	// the manifest and the HTML head reference only icons that are served (with 200), incl. maskable
 	var m struct {
-		Icons []struct{ Src, Purpose string }
+		Icons []struct{ Src, Sizes, Purpose string }
 	}
 	_ = json.Unmarshal(do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.Bytes(), &m)
-	found := false
+	sizes, maskable := map[string]bool{}, false
 	for _, ic := range m.Icons {
-		if ic.Purpose == "maskable" && ic.Src == "/icons/maskable-512.png" {
-			found = true
+		sizes[ic.Sizes] = true
+		maskable = maskable || ic.Purpose == "maskable"
+		if rec := do(t, h, "GET", ic.Src, "", nil); rec.Code != 200 {
+			t.Errorf("manifest icon %s: %d", ic.Src, rec.Code)
 		}
 	}
-	if !found {
-		t.Fatalf("manifest lacks maskable icon: %v", m)
+	if !sizes["192x192"] || !sizes["512x512"] || !maskable {
+		t.Fatalf("manifest needs 192, 512 and a maskable icon: %v", m)
 	}
-	if sw := do(t, h, "GET", "/sw.js", "", nil).Body.String(); strings.Contains(sw, "shell-v5") {
+	index := do(t, h, "GET", "/", "", nil).Body.String()
+	refs := regexp.MustCompile(`<link rel="(?:icon|apple-touch-icon)"[^>]*href="([^"]+)"`).FindAllStringSubmatch(index, -1)
+	if len(refs) < 2 {
+		t.Fatalf("index.html icon links: %v", refs)
+	}
+	for _, r := range refs {
+		if rec := do(t, h, "GET", r[1], "", nil); rec.Code != 200 {
+			t.Errorf("head icon %s: %d", r[1], rec.Code)
+		}
+	}
+	for _, old := range []string{"/icons/192.png", "/icons/512.png", "/icons/180.png", "/icons/maskable-512.png"} {
+		for name, s := range map[string]string{"index": index, "manifest": do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.String()} {
+			if strings.Contains(s, old) {
+				t.Errorf("%s still references old icon %s", name, old)
+			}
+		}
+	}
+	if sw := do(t, h, "GET", "/sw.js", "", nil).Body.String(); strings.Contains(sw, "shell-v6") {
 		t.Fatal("service worker cache version not bumped")
+	}
+}
+
+// Every pixel of the icons and every colour in the SVG comes from the app's CSS palette.
+func TestIconUsesOnlyPalette(t *testing.T) {
+	css, err := os.ReadFile(filepath.Join("web", "style.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hex := regexp.MustCompile(`#[0-9a-fA-F]{6}\b`)
+	palette := map[string]bool{}
+	for _, c := range hex.FindAllString(string(css), -1) {
+		palette[strings.ToLower(c)] = true
+	}
+	svg, err := os.ReadFile(filepath.Join("web", "icons", "icon.svg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cols := hex.FindAllString(string(svg), -1)
+	if len(cols) == 0 {
+		t.Fatal("icon.svg has no colours")
+	}
+	for _, c := range cols {
+		if !palette[strings.ToLower(c)] {
+			t.Errorf("icon.svg colour %s is not in style.css", c)
+		}
+	}
+	// the PNG renderer draws with these colours (anti-aliased edges only blend between them)
+	for _, c := range []color.NRGBA{iconDeep, iconMid, iconEdge, iconLight} {
+		if !palette[fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)] {
+			t.Errorf("renderer colour %v is not in style.css", c)
+		}
 	}
 }
 
