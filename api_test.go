@@ -233,7 +233,7 @@ func TestIconsArePurpleAndMaskableIsFullBleed(t *testing.T) {
 	_ = json.Unmarshal(do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.Bytes(), &m)
 	found := false
 	for _, ic := range m.Icons {
-		if ic.Purpose == "maskable" && ic.Src == "/icons/maskable-512.png" {
+		if ic.Purpose == "maskable" && ic.Src == "/icons/maskable-512.png?v=2" {
 			found = true
 		}
 	}
@@ -242,6 +242,57 @@ func TestIconsArePurpleAndMaskableIsFullBleed(t *testing.T) {
 	}
 	if sw := do(t, h, "GET", "/sw.js", "", nil).Body.String(); strings.Contains(sw, "shell-v5") {
 		t.Fatal("service worker cache version not bumped")
+	}
+}
+
+// Every icon the manifest and the HTML head reference must be served (query string and all), be
+// free of green (the old icon), and the references must be cache-busted.
+func TestIconReferencesResolveAndAreNotGreen(t *testing.T) {
+	h := newMux(testServer(t))
+	var m struct{ Icons []struct{ Src, Sizes string } }
+	_ = json.Unmarshal(do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.Bytes(), &m)
+	sizes := map[string]bool{}
+	refs := []string{}
+	for _, ic := range m.Icons {
+		refs = append(refs, ic.Src)
+		sizes[ic.Sizes] = true
+	}
+	if !sizes["192x192"] || !sizes["512x512"] {
+		t.Fatalf("manifest needs 192 and 512 icons: %v", m)
+	}
+	page := do(t, h, "GET", "/", "", nil).Body.String()
+	for _, rel := range []string{`rel="icon" href="`, `rel="apple-touch-icon" href="`} {
+		i := strings.Index(page, rel)
+		if i < 0 {
+			t.Fatalf("index.html lacks %s", rel)
+		}
+		rest := page[i+len(rel):]
+		refs = append(refs, rest[:strings.Index(rest, `"`)])
+	}
+	for _, ref := range refs {
+		if !strings.Contains(ref, "?v=2") {
+			t.Errorf("%s is not cache-busted", ref)
+		}
+		rec := do(t, h, "GET", ref, "", nil)
+		if rec.Code != 200 {
+			t.Fatalf("%s: %d", ref, rec.Code)
+		}
+		img, err := png.Decode(rec.Body)
+		if err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				r, g, bl, a := img.At(x, y).RGBA()
+				if a > 0 && (g > r || g > bl) {
+					t.Fatalf("%s has a non-purple pixel at %d,%d: %d %d %d", ref, x, y, r, g, bl)
+				}
+			}
+		}
+	}
+	if strings.Contains(page, "/icons/192.png\"") || strings.Contains(page, "/icons/180.png\"") {
+		t.Error("index.html still references uncache-busted icons")
 	}
 }
 

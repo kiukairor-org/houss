@@ -86,26 +86,40 @@ func distSeg(px, py, ax, ay, bx, by float64) float64 {
 	return math.Hypot(px-(ax+t*dx), py-(ay+t*dy))
 }
 
-// markAt reports whether the centred point (x,y) (unit square, origin in the middle) lies on the
-// house, and whether it lies on the check mark cut out of the house body.
-func markAt(x, y float64) (house, check bool) {
-	roof := y >= -0.30 && y <= -0.02 && math.Abs(x) <= 0.32*(y+0.30)/0.28
-	body := y > -0.02 && y <= 0.26 && math.Abs(x) <= 0.24
-	if !roof && !body {
-		return false, false
+// markAt returns the colour of the checklist mark at the centred point (x,y) (unit square, origin
+// in the middle) and whether the point is on the mark at all. Three list rows: the first is done
+// (filled disc with the tick cut out, bright bar), the others are open (ring, soft bar).
+func markAt(x, y float64, light, soft [3]float64) ([3]float64, bool) {
+	rows := [3]struct{ cy, end float64 }{{-0.17, 0.23}, {0, 0.23}, {0.17, 0.13}}
+	for i, r := range rows {
+		c := light
+		if i > 0 {
+			c = soft
+		}
+		if distSeg(x, y, -0.03, r.cy, r.end, r.cy) < 0.032 {
+			return c, true
+		}
+		d := math.Hypot(x+0.17, y-r.cy)
+		if i == 0 && d < 0.07 {
+			tick := distSeg(x, y, -0.20, r.cy, -0.178, r.cy+0.024) < 0.014 || distSeg(x, y, -0.178, r.cy+0.024, -0.135, r.cy-0.024) < 0.014
+			return c, !tick
+		}
+		if i > 0 && math.Abs(d-0.06) < 0.012 {
+			return c, true
+		}
 	}
-	check = distSeg(x, y, -0.11, 0.12, -0.03, 0.20) < 0.035 || distSeg(x, y, -0.03, 0.20, 0.12, 0.04) < 0.035
-	return true, check
+	return [3]float64{}, false
 }
 
-// renderIcon draws a light house with a check mark on a purple gradient. The mark stays inside the
+// renderIcon draws a checklist (first row ticked) on a purple gradient, using only palette colours. The mark stays inside the
 // central 60% so the full-bleed maskable variant survives any mask; the regular variant has
 // rounded transparent corners and a slightly larger mark.
 func renderIcon(n int, maskable bool) []byte {
 	const ss = 3
-	top := [3]float64{0x7a, 0x2f, 0x9c}
-	bot := [3]float64{0x35, 0x06, 0x3e}
-	light := [3]float64{0xec, 0xe3, 0xf4}
+	top := [3]float64{0x9a, 0x5a, 0xa9}   // --purple-400
+	bot := [3]float64{0x35, 0x06, 0x3e}   // --purple-900
+	light := [3]float64{0xec, 0xe3, 0xf4} // --bg
+	soft := [3]float64{0xc9, 0xa3, 0xd4}  // --purple-300
 	scale := 1.0
 	if !maskable {
 		scale = 1.12
@@ -127,8 +141,8 @@ func renderIcon(n int, maskable bool) []byte {
 					}
 					t := (u + v) / 2 // diagonal gradient
 					c := [3]float64{top[0] + (bot[0]-top[0])*t, top[1] + (bot[1]-top[1])*t, top[2] + (bot[2]-top[2])*t}
-					if house, check := markAt((u-0.5)/scale, (v-0.5)/scale); house && !check {
-						c = light
+					if mc, on := markAt((u-0.5)/scale, (v-0.5)/scale, light, soft); on {
+						c = mc
 					}
 					r, g, b, a = r+c[0], g+c[1], b+c[2], a+1
 				}
