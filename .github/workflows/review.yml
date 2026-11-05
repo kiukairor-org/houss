@@ -112,11 +112,29 @@ jobs:
             echo "PROMPT_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # D80: the pipeline item's trace context (PR → "Closes #N" → catcher marker) for Claude Code's OTel.
+      - id: trace
+        if: steps.gate.outputs.escalate == 'false' && steps.budget.outputs.state != 'limit'
+        env: {GH_TOKEN: "${{ steps.ro.outputs.token }}", NUM: "${{ steps.pr.outputs.number }}"}
+        run: .github/scripts/trace-context.sh
       - id: claude
         if: steps.gate.outputs.escalate == 'false' && steps.budget.outputs.state != 'limit'
         uses: anthropics/claude-code-action@374f254f5efaf968abfe15d399fd90972e8138b9 # v1.0.251
         env:
           GH_TOKEN: ${{ steps.ro.outputs.token }}   # read-only token for the gh commands below
+          # D80: Claude Code's built-in OpenTelemetry → New Relic 8680047 (EU), on only once the org secret exists.
+          # Prompts, responses and tool details stay redacted (Claude Code defaults; no OTEL_LOG_* set here).
+          CLAUDE_CODE_ENABLE_TELEMETRY: ${{ secrets.KIU_NEW_RELIC_LICENSE_KEY != '' && '1' || '0' }}
+          CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: "1"
+          OTEL_METRICS_EXPORTER: otlp
+          OTEL_LOGS_EXPORTER: otlp
+          OTEL_TRACES_EXPORTER: otlp
+          OTEL_EXPORTER_OTLP_PROTOCOL: http/json
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://otlp.eu01.nr-data.net
+          OTEL_EXPORTER_OTLP_HEADERS: api-key=${{ secrets.KIU_NEW_RELIC_LICENSE_KEY }}
+          OTEL_METRICS_INCLUDE_ACCOUNT_UUID: "false"
+          OTEL_RESOURCE_ATTRIBUTES: service.name=claude-code,service.namespace=homie-pipeline,ai-pipeline=true,cicd.provider.name=github,vcs.repository.name=${{ github.event.repository.name }},cicd.pipeline.name=review,cicd.pipeline.run.id=${{ github.run_id }}
+          TRACEPARENT: ${{ steps.trace.outputs.traceparent }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.ro.outputs.token }}
