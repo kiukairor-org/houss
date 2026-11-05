@@ -20,6 +20,7 @@ import (
 
 const (
 	spanKindServer  = 2 // OTLP SpanKind SERVER
+	spanKindClient  = 3 // OTLP SpanKind CLIENT (outbound calls, e.g. the LLM)
 	statusCodeError = 2 // OTLP StatusCode ERROR
 	maxBatch        = 256
 	flushEvery      = 5 * time.Second
@@ -42,6 +43,7 @@ type otlpStatus struct {
 type otlpSpan struct {
 	TraceID     string     `json:"traceId"`
 	SpanID      string     `json:"spanId"`
+	ParentID    string     `json:"parentSpanId,omitempty"`
 	Name        string     `json:"name"`
 	Kind        int        `json:"kind"`
 	StartUnixNs string     `json:"startTimeUnixNano"`
@@ -163,8 +165,47 @@ func (r *statusRecorder) Flush() {
 type spanAttrsKey struct{}
 
 type spanAttrs struct {
-	mu    sync.Mutex
-	attrs []otlpAttr
+	mu      sync.Mutex
+	attrs   []otlpAttr
+	traceID string // ids of the request span, so outbound calls become its children
+	spanID  string
+}
+
+// appTracer is the process tracer (set by setupTracing); nil means tracing is off.
+var appTracer *tracer
+
+// clientSpan is an outbound call in progress (nil-safe: every method is a no-op without tracing).
+type clientSpan struct {
+	t     *tracer
+	s     otlpSpan
+	start time.Time
+}
+
+// startSpan opens a CLIENT span: a child of the request span in ctx, or a new trace for background work.
+func startSpan(ctx context.Context, name string, attrs ...otlpAttr) *clientSpan {
+	if appTracer == nil {
+		return nil
+	}
+	s := otlpSpan{TraceID: randHex(16), SpanID: randHex(8), Name: name, Kind: spanKindClient, Attributes: attrs}
+	if sa, ok := ctx.Value(spanAttrsKey{}).(*spanAttrs); ok && sa.traceID != "" {
+		s.TraceID, s.ParentID = sa.traceID, sa.spanID
+	}
+	return &clientSpan{t: appTracer, s: s, start: time.Now()}
+}
+
+// end records the span; a non-nil err marks it as an error with error.type.
+func (c *clientSpan) end(err error, attrs ...otlpAttr) {
+	if c == nil {
+		return
+	}
+	c.s.StartUnixNs = strconv.FormatInt(c.start.UnixNano(), 10)
+	c.s.EndUnixNs = strconv.FormatInt(time.Now().UnixNano(), 10)
+	c.s.Attributes = append(c.s.Attributes, attrs...)
+	if err != nil {
+		c.s.Status.Code = statusCodeError
+		c.s.Attributes = append(c.s.Attributes, strAttr("error.type", errType(err)))
+	}
+	c.t.record(c.s)
 }
 
 // addSpanAttr attaches an attribute to the current request's span; a no-op without tracing.
@@ -188,7 +229,7 @@ func (t *tracer) middleware(mux *http.ServeMux) http.Handler {
 		}
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		sa := &spanAttrs{}
+		sa := &spanAttrs{traceID: randHex(16), spanID: randHex(8)}
 		r = r.WithContext(context.WithValue(r.Context(), spanAttrsKey{}, sa)) // r.Pattern is set on this copy
 		mux.ServeHTTP(rec, r)
 		end := time.Now()
@@ -199,8 +240,8 @@ func (t *tracer) middleware(mux *http.ServeMux) http.Handler {
 			route = r.Method + " " + route
 		}
 		s := otlpSpan{
-			TraceID:     randHex(16),
-			SpanID:      randHex(8),
+			TraceID:     sa.traceID,
+			SpanID:      sa.spanID,
 			Name:        route,
 			Kind:        spanKindServer,
 			StartUnixNs: strconv.FormatInt(start.UnixNano(), 10),
@@ -229,6 +270,7 @@ func setupTracing() *tracer {
 		service = appName()
 	}
 	t := newTracer(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), service)
+	appTracer = t
 	if t != nil {
 		go t.run()
 	}

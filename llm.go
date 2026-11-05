@@ -92,7 +92,47 @@ type llmMsg struct {
 
 // chat sends one non-streaming request and decodes the model's JSON answer into out.
 // Connection problems and timeouts return errLLMDown; anything malformed returns errLLMOutput.
-func (l *llmClient) chat(ctx context.Context, msgs []llmMsg, schema any, out any) error {
+// genAISpan opens the OpenTelemetry GenAI client span for one Ollama /api/chat call. New Relic AI Monitoring
+// reads gen_ai.* spans natively, so the LLM shows there without an agent (think:false stays native).
+func (l *llmClient) genAISpan(ctx context.Context) *clientSpan {
+	return startSpan(ctx, "chat "+l.model,
+		strAttr("gen_ai.provider.name", "ollama"), strAttr("gen_ai.system", "ollama"),
+		strAttr("gen_ai.operation.name", "chat"), strAttr("gen_ai.request.model", l.model),
+		strAttr("server.address", strings.TrimPrefix(strings.TrimPrefix(l.url, "http://"), "https://")))
+}
+
+// ollamaUsage is the token accounting Ollama returns on the (last) /api/chat message.
+type ollamaUsage struct {
+	Model           string `json:"model"`
+	PromptEvalCount int    `json:"prompt_eval_count"`
+	EvalCount       int    `json:"eval_count"`
+}
+
+func (u ollamaUsage) attrs() []otlpAttr {
+	a := []otlpAttr{intAttr("gen_ai.usage.input_tokens", u.PromptEvalCount), intAttr("gen_ai.usage.output_tokens", u.EvalCount)}
+	if u.Model != "" {
+		a = append(a, strAttr("gen_ai.response.model", u.Model))
+	}
+	return a
+}
+
+// errType names an error for spans: timeout, llm_down, llm_output or other.
+func errType(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, errLLMDown):
+		return "llm_down"
+	case errors.Is(err, errLLMOutput):
+		return "llm_output"
+	}
+	return "other"
+}
+
+func (l *llmClient) chat(ctx context.Context, msgs []llmMsg, schema any, out any) (err error) {
+	sp := l.genAISpan(ctx)
+	var usage ollamaUsage
+	defer func() { sp.end(err, usage.attrs()...) }()
 	body, _ := json.Marshal(map[string]any{
 		"model":      l.model,
 		"messages":   msgs,
@@ -117,6 +157,7 @@ func (l *llmClient) chat(ctx context.Context, msgs []llmMsg, schema any, out any
 		return fmt.Errorf("%w: HTTP %d", errLLMOutput, resp.StatusCode)
 	}
 	var r struct {
+		ollamaUsage
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
@@ -127,6 +168,7 @@ func (l *llmClient) chat(ctx context.Context, msgs []llmMsg, schema any, out any
 		}
 		return fmt.Errorf("%w: %v", errLLMOutput, err)
 	}
+	usage = r.ollamaUsage
 	l.setUp(true)
 	if err := json.Unmarshal([]byte(r.Message.Content), out); err != nil {
 		return fmt.Errorf("%w: %v", errLLMOutput, err)
