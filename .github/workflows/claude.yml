@@ -54,9 +54,28 @@ jobs:
         run: |
           printf '⏸️ Agent run skipped: the owner'"'"'s Claude usage gate is **%s**. It runs again automatically when usage is resumed.\n<!-- homie-budget-skipped -->\n' "$STATE" > skip.md
           gh issue comment "$NUM" -R "$GITHUB_REPOSITORY" --body-file skip.md
+      # D80: the pipeline item's trace context (catcher marker in the issue body) for Claude Code's OTel.
+      - id: trace
+        if: steps.budget.outputs.state == 'ok'
+        env: {GH_TOKEN: "${{ steps.bot.outputs.token }}", NUM: "${{ github.event.issue.number }}"}
+        run: .github/scripts/trace-context.sh
       - id: claude
         if: steps.budget.outputs.state == 'ok'
         uses: anthropics/claude-code-action@374f254f5efaf968abfe15d399fd90972e8138b9 # v1.0.251
+        env:
+          # D80: Claude Code's built-in OpenTelemetry → New Relic 8680047 (EU), on only once the org secret exists.
+          # Prompts, responses and tool details stay redacted (Claude Code defaults; no OTEL_LOG_* set here).
+          CLAUDE_CODE_ENABLE_TELEMETRY: ${{ secrets.KIU_NEW_RELIC_LICENSE_KEY != '' && '1' || '0' }}
+          CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: "1"
+          OTEL_METRICS_EXPORTER: otlp
+          OTEL_LOGS_EXPORTER: otlp
+          OTEL_TRACES_EXPORTER: otlp
+          OTEL_EXPORTER_OTLP_PROTOCOL: http/json
+          OTEL_EXPORTER_OTLP_ENDPOINT: https://otlp.eu01.nr-data.net
+          OTEL_EXPORTER_OTLP_HEADERS: api-key=${{ secrets.KIU_NEW_RELIC_LICENSE_KEY }}
+          OTEL_METRICS_INCLUDE_ACCOUNT_UUID: "false"
+          OTEL_RESOURCE_ATTRIBUTES: service.name=claude-code,service.namespace=homie-pipeline,ai-pipeline=true,cicd.provider.name=github,vcs.repository.name=${{ github.event.repository.name }},cicd.pipeline.name=claude,cicd.pipeline.run.id=${{ github.run_id }}
+          TRACEPARENT: ${{ steps.trace.outputs.traceparent }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.bot.outputs.token }}
