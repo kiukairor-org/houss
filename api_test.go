@@ -251,6 +251,32 @@ func TestIconsArePurpleAndMaskableIsFullBleed(t *testing.T) {
 	if !sizes["192x192"] || !sizes["512x512"] || !maskable {
 		t.Fatalf("manifest needs 192, 512 and a maskable icon: %v", m)
 	}
+	// the splash is the icon on background_color (the page background); the bar is the icon's deep purple
+	var colors struct {
+		BackgroundColor string `json:"background_color"`
+		ThemeColor      string `json:"theme_color"`
+	}
+	_ = json.Unmarshal(do(t, h, "GET", "/manifest.webmanifest", "", nil).Body.Bytes(), &colors)
+	if colors.BackgroundColor != "#ece3f4" || colors.ThemeColor != "#35063e" {
+		t.Errorf("manifest colours: %+v", colors)
+	}
+	// manifest and icons are served with the right content types
+	if ct := do(t, h, "GET", "/manifest.webmanifest", "", nil).Header().Get("Content-Type"); ct != "application/manifest+json" {
+		t.Errorf("manifest content type %q", ct)
+	}
+	for _, p := range []string{"/icons/icon-192.png?v=2", "/icons/icon-512.png?v=2", "/icons/icon-maskable-512.png?v=2", "/icons/apple-touch-180.png?v=2"} {
+		if ct := do(t, h, "GET", p, "", nil).Header().Get("Content-Type"); ct != "image/png" {
+			t.Errorf("%s content type %q", p, ct)
+		}
+	}
+	// maskable safe zone: the mark stays inside the central 80% circle, so outer ring is plain background
+	mask := decode("/icons/icon-maskable-512.png")
+	for _, pt := range [][2]int{{0, 0}, {511, 0}, {0, 511}, {511, 511}, {256, 20}, {256, 491}, {20, 256}, {491, 256}} {
+		r, g, b, _ := mask.At(pt[0], pt[1]).RGBA()
+		if r>>8 != 0x35 || g>>8 != 0x06 || b>>8 != 0x3e {
+			t.Errorf("maskable icon %v not plain background: %x %x %x", pt, r>>8, g>>8, b>>8)
+		}
+	}
 	index := do(t, h, "GET", "/", "", nil).Body.String()
 	refs := regexp.MustCompile(`<link rel="(?:icon|apple-touch-icon)"[^>]*href="([^"]+)"`).FindAllStringSubmatch(index, -1)
 	if len(refs) < 2 {
