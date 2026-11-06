@@ -61,6 +61,8 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, map[string]any{"query": q, "results": res})
 	}))
 
+	mux.HandleFunc("GET /api/quote", a.require(handleQuote))
+
 	mux.HandleFunc("GET /api/items", a.require(func(w http.ResponseWriter, r *http.Request) {
 		tab := r.URL.Query().Get("tab")
 		if tab != "" && !tabs[tab] {

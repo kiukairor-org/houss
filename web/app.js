@@ -442,6 +442,19 @@ async function sendChat(text) {
   renderChat();
 }
 $('chat-open').onclick = () => { chatting = true; renderChat(); loadSmart(); loadProfile(); };
+// Music button: one random French rap quote from /api/quote in a closable popup; clicking again replaces it.
+async function showQuote() {
+  try {
+    const res = await fetch('/api/quote');
+    if (!res.ok) return;
+    const q = await res.json();
+    $('quote-text').textContent = '« ' + q.text + ' »';
+    $('quote-by').textContent = q.artist + ' — ' + q.track;
+    $('quote').hidden = false;
+  } catch (e) { /* offline: leave the popup as it was */ }
+}
+$('quote-open').onclick = showQuote;
+$('quote-close').onclick = () => { $('quote').hidden = true; };
 $('chat-back').onclick = () => { chatting = false; renderChat(); };
 $('chat-new').onclick = () => { chatLog = []; saveChat(); renderChat(); };
 $('chat-form').onsubmit = (e) => {

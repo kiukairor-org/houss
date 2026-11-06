@@ -23,7 +23,7 @@
   </form>
 </section>
 <main id="app" hidden>
-  <header><h1>houss</h1><span id="status" role="status"></span><button id="chat-open" type="button" aria-label="Assistant">💬</button><button id="logout" type="button">Sign out</button></header>
+  <header><h1>houss</h1><span id="status" role="status"></span><button id="chat-open" type="button" aria-label="Assistant">💬</button><button id="quote-open" type="button" aria-label="French rap quote">🎵</button><button id="logout" type="button">Sign out</button></header>
   <nav id="tabs" aria-label="Filter">
     <button data-tab="shopping" class="active">Shopping <span class="count"></span></button>
     <button data-tab="todos">Todos <span class="count"></span></button>
@@ -39,6 +39,11 @@
     </label>
   </form>
   <p id="toast" role="status" hidden></p>
+  <aside id="quote" role="status" hidden>
+    <blockquote id="quote-text"></blockquote>
+    <p id="quote-by"></p>
+    <button id="quote-close" type="button" class="ghost" aria-label="Close quote">✕</button>
+  </aside>
   <section id="suggest" aria-label="Running low?" hidden>
     <h2>Running low?</h2>
     <ul id="suggest-list"></ul>

@@ -89,7 +89,11 @@ li .icon-btn.danger:hover:not(:disabled) { background: var(--danger-soft); }
 [hidden] { display: none !important; }
 #add-form.busy .primary { opacity: .6; pointer-events: none; }
 #toast { margin: 0 0 var(--s3); font-size: .85rem; color: var(--success); }
-#chat-open { background: none; border-color: transparent; box-shadow: none; }
+#quote { position: fixed; left: var(--s3); right: var(--s3); bottom: calc(var(--s3) + env(safe-area-inset-bottom)); max-width: 28rem; margin: 0 auto; padding: var(--s3) 48px var(--s3) var(--s4); background: var(--accent-soft); color: var(--accent-text); border-radius: 1rem; box-shadow: var(--shadow-4); z-index: 10; }
+#quote blockquote { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+#quote p { margin: var(--s2) 0 0; font-size: .85rem; color: var(--muted); }
+#quote-close { position: absolute; top: 0; right: 0; min-width: 44px; min-height: 44px; background: none; border-color: transparent; box-shadow: none; color: var(--accent-text); }
+#chat-open, #quote-open { background: none; border-color: transparent; box-shadow: none; }
 #chat { display: none; flex-direction: column; gap: var(--s3); }
 #app.chatting > :not(header):not(#chat) { display: none !important; }
 #app.chatting #chat { display: flex; }
