@@ -1,5 +1,5 @@
 // Caches the app shell; API calls are never touched (the app keeps its own IndexedDB copy + queue).
-const CACHE = 'houss-shell-v7';
+const CACHE = 'houss-shell-v8';
 const SHELL = ['/', '/app.js', '/style.css', '/manifest.webmanifest', '/icons/icon.svg?v=2', '/icons/favicon-32.png?v=2', '/icons/apple-touch-180.png?v=2', '/icons/icon-192.png?v=2', '/icons/icon-512.png?v=2', '/icons/icon-maskable-512.png?v=2'];
 
 self.addEventListener('install', (e) => {
