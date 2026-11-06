@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -103,5 +104,66 @@ func TestTracingOffWithoutEndpoint(t *testing.T) {
 	mux := newMux(testServer(t))
 	if h := tr.middleware(mux); h != http.Handler(mux) {
 		t.Fatal("nil tracer must return the mux unchanged")
+	}
+}
+
+func TestLLMCallsAreGenAIClientSpansInsideTheRequest(t *testing.T) {
+	col, got := fakeCollector(t)
+	tr := newTracer(col.URL, "demo")
+	appTracer = tr
+	t.Cleanup(func() { appTracer = nil })
+	l, _ := fakeLLM(t, func(w http.ResponseWriter) {
+		writeJSON(w, http.StatusOK, map[string]any{"model": "test-model", "prompt_eval_count": 42, "eval_count": 7,
+			"message": map[string]string{"role": "assistant", "content": `{"ok":true}`}})
+	})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ask", func(w http.ResponseWriter, r *http.Request) {
+		var out map[string]any
+		if err := l.chat(r.Context(), []llmMsg{{"user", "hi"}}, nil, &out); err != nil {
+			t.Errorf("chat: %v", err)
+		}
+	})
+	tr.middleware(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ask", nil))
+	_ = l.chat(context.Background(), []llmMsg{{"user", "background"}}, nil, &map[string]any{}) // no request: own trace
+	tr.flush()
+	var server, child, bg map[string]any
+	for _, s := range got() {
+		switch {
+		case s["kind"].(float64) == 2:
+			server = s
+		case s["parentSpanId"] != nil:
+			child = s
+		default:
+			bg = s
+		}
+	}
+	if server == nil || child == nil || bg == nil {
+		t.Fatalf("want server, child and background spans: %v", got())
+	}
+	if child["traceId"] != server["traceId"] || child["parentSpanId"] != server["spanId"] || child["kind"].(float64) != 3 {
+		t.Fatalf("LLM span is not a CLIENT child of the request span: %v / %v", child, server)
+	}
+	if child["name"] != "chat test-model" || attr(child, "gen_ai.provider.name")["stringValue"] != "ollama" ||
+		attr(child, "gen_ai.operation.name")["stringValue"] != "chat" || attr(child, "gen_ai.request.model")["stringValue"] != "test-model" ||
+		attr(child, "gen_ai.usage.input_tokens")["intValue"] != "42" || attr(child, "gen_ai.usage.output_tokens")["intValue"] != "7" {
+		t.Fatalf("missing gen_ai attributes: %v", child)
+	}
+	if bg["traceId"] == server["traceId"] {
+		t.Fatal("background call must start its own trace")
+	}
+}
+
+func TestLLMSpanRecordsErrors(t *testing.T) {
+	col, got := fakeCollector(t)
+	appTracer = newTracer(col.URL, "demo")
+	t.Cleanup(func() { appTracer = nil })
+	l, _ := fakeLLM(t, func(w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) })
+	if err := l.chat(context.Background(), []llmMsg{{"user", "hi"}}, nil, &map[string]any{}); err == nil {
+		t.Fatal("want an error")
+	}
+	appTracer.flush()
+	s := got()
+	if len(s) != 1 || s[0]["status"].(map[string]any)["code"].(float64) != 2 || attr(s[0], "error.type")["stringValue"] != "llm_output" {
+		t.Fatalf("error not recorded on the span: %v", s)
 	}
 }

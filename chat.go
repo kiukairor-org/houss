@@ -158,6 +158,9 @@ func (l *chatLimiter) acquire(session string) (func(), error) {
 // chatStream asks the LLM for one streamed answer and copies the text to w as it arrives. Nothing
 // is written to w before the first token, so a slow or absent LLM still gets a clean JSON error.
 func (l *llmClient) chatStream(ctx context.Context, w http.ResponseWriter, msgs []llmMsg) (firstMs, chars int, err error) {
+	sp := l.genAISpan(ctx)
+	var usage ollamaUsage
+	defer func() { sp.end(err, usage.attrs()...) }()
 	ctx, cancel := context.WithTimeout(ctx, chatMaxTime)
 	defer cancel()
 	first := time.AfterFunc(chatFirstToken, cancel)
@@ -189,6 +192,7 @@ func (l *llmClient) chatStream(ctx context.Context, w http.ResponseWriter, msgs 
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
 		var part struct {
+			ollamaUsage
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
@@ -212,6 +216,7 @@ func (l *llmClient) chatStream(ctx context.Context, w http.ResponseWriter, msgs 
 			}
 		}
 		if part.Done {
+			usage = part.ollamaUsage // the final message carries the token counts
 			break
 		}
 	}
