@@ -25,7 +25,7 @@ func fakeLLM(t *testing.T, reply func(w http.ResponseWriter)) (*llmClient, *[]ma
 		reply(w)
 	}))
 	t.Cleanup(srv.Close)
-	l := &llmClient{url: srv.URL, model: "test-model", client: &http.Client{}, up: true}
+	l := &llmClient{url: srv.URL, model: "test-model", client: instrumentedClient(0, true), up: true}
 	return l, &got
 }
 

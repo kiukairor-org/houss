@@ -8,6 +8,11 @@ resources:
   - service.yaml
   - ingress.yaml
   - pvc.yaml
+# D81: New Relic Browser (RUM) copy/paste snippet for NR app "houss" (account 8680047). Not a secret: the browser
+# key ships in every page. Regenerate from NerdGraph (BrowserApplicationEntity loader script) if the app is recreated.
+configMapGenerator:
+  - name: newrelic-browser
+    files: [snippet.html=newrelic-browser-snippet.html]
 labels:
   - pairs: {app.kubernetes.io/name: app}
     includeSelectors: true

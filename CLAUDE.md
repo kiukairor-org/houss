@@ -11,7 +11,8 @@ reviewer (another agent, `kiu-homie-reviewer`) decides. You never deploy anythin
 - `kubectl kustomize deploy` must render (only if you touched `deploy/`)
 
 ## Conventions
-- Standard library only. Adding a dependency needs an explicit requirement in the issue.
+- Standard library only, except OpenTelemetry (`go.opentelemetry.io/...`, decision D81): keep `telemetry.go`,
+  wrap new outbound `http.Client`s with `instrumentedClient`. Any other dependency needs an explicit requirement in the issue.
 - Every behaviour change comes with a test in `*_test.go` that fails without the change.
 - Handlers return JSON with `Content-Type: application/json`; keep `GET /healthz` working.
 - Keep changes minimal and inside the issue's acceptance criteria. No drive-by refactors.
