@@ -14,14 +14,17 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim: {claimName: app-data}
+        - name: newrelic-browser   # D81: RUM snippet (kustomization.yaml configMapGenerator)
+          configMap: {name: newrelic-browser, optional: true}
       containers:
         - name: app
           image: ghcr.io/kiukairor-org/app-template:latest   # overridden by Argo CD
           ports: [{name: http, containerPort: 8080}]
           env:
             - {name: APP_NAME, value: app}                   # overridden by Argo CD
-            # Traces go to the in-cluster OpenTelemetry Collector (homelab-gitops apps/observability), no key here.
+            # Traces + metrics (OTel SDK, D81) go to the in-cluster OpenTelemetry Collector (homelab-gitops apps/observability), no key here.
             - {name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.observability.svc.cluster.local:4318"}
+            - {name: NEW_RELIC_BROWSER_SNIPPET_FILE, value: /etc/newrelic/snippet.html}
             - {name: DATA_DIR, value: /data}
             # Secret "houss-secrets" (key: password) is created out of band; it is not stored in this repo.
             - name: HOUSS_PASSWORD
@@ -31,10 +34,10 @@ spec:
             - {name: LLM_ENABLED, value: "true"}
             - {name: LLM_URL, value: "http://llm.ai.svc.cluster.local:11434"}
             - {name: LLM_MODEL, value: "qwen3:1.7b"}
-          volumeMounts: [{name: data, mountPath: /data}]
+          volumeMounts: [{name: data, mountPath: /data}, {name: newrelic-browser, mountPath: /etc/newrelic, readOnly: true}]
           resources:
-            requests: {cpu: 10m, memory: 16Mi}
-            limits: {memory: 64Mi}
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}   # D81: OpenTelemetry SDK buffers (was 64Mi)
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

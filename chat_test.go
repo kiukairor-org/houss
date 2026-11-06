@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -178,4 +179,13 @@ func TestChatSystemSummary(t *testing.T) {
 }
 
 // The tracing wrapper must pass Flush through, or answers arrive in one block instead of streaming.
-var _ http.Flusher = (*statusRecorder)(nil)
+func TestTracingWrapperKeepsFlusher(t *testing.T) {
+	testTelemetry(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /stream", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := w.(http.Flusher); !ok {
+			t.Error("ResponseWriter lost http.Flusher behind serverHandler")
+		}
+	})
+	serverHandler(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/stream", nil))
+}

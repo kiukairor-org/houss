@@ -1,278 +1,148 @@
-// Tracing without dependencies: one OTLP server span per request, exported as OTLP/HTTP JSON to
-// $OTEL_EXPORTER_OTLP_ENDPOINT (the in-cluster OpenTelemetry Collector, which forwards to New Relic).
+// OpenTelemetry with the official Go SDK (D81, supersedes the hand-written exporter of D40): traces and metrics as
+// OTLP/HTTP to $OTEL_EXPORTER_OTLP_ENDPOINT (the in-cluster OpenTelemetry Collector, which forwards to New Relic).
+//   - otelhttp on the server: one SERVER span per request + the semconv metric http.server.request.duration, which
+//     New Relic's OpenTelemetry APM view and golden metrics are computed from.
+//   - otelhttp on every outbound http.Client (instrumentedClient): CLIENT spans + http.client.request.duration, so
+//     Ollama and tesco.com show as external services.
+//   - Go runtime metrics (GC, goroutines, memory) for New Relic's Go runtime page.
+//
 // No endpoint set (tests, local runs) means no export. Keep this file when building on the template.
 package main
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
-const (
-	spanKindServer  = 2 // OTLP SpanKind SERVER
-	spanKindClient  = 3 // OTLP SpanKind CLIENT (outbound calls, e.g. the LLM)
-	statusCodeError = 2 // OTLP StatusCode ERROR
-	maxBatch        = 256
-	flushEvery      = 5 * time.Second
-)
+const scopeName = "app-template"
 
-type otlpValue struct {
-	StringValue *string `json:"stringValue,omitempty"`
-	IntValue    *string `json:"intValue,omitempty"` // OTLP/JSON encodes int64 as a string
-}
+type otlpAttr = attribute.KeyValue
 
-type otlpAttr struct {
-	Key   string    `json:"key"`
-	Value otlpValue `json:"value"`
-}
+func strAttr(k, v string) otlpAttr { return attribute.String(k, v) }
 
-type otlpStatus struct {
-	Code int `json:"code,omitempty"`
-}
+func intAttr(k string, v int) otlpAttr { return attribute.Int(k, v) }
 
-type otlpSpan struct {
-	TraceID     string     `json:"traceId"`
-	SpanID      string     `json:"spanId"`
-	ParentID    string     `json:"parentSpanId,omitempty"`
-	Name        string     `json:"name"`
-	Kind        int        `json:"kind"`
-	StartUnixNs string     `json:"startTimeUnixNano"`
-	EndUnixNs   string     `json:"endTimeUnixNano"`
-	Attributes  []otlpAttr `json:"attributes"`
-	Status      otlpStatus `json:"status"`
-}
-
-func strAttr(k, v string) otlpAttr { return otlpAttr{Key: k, Value: otlpValue{StringValue: &v}} }
-
-func intAttr(k string, v int) otlpAttr {
-	s := strconv.Itoa(v)
-	return otlpAttr{Key: k, Value: otlpValue{IntValue: &s}}
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// tracer buffers spans and posts them in batches; it never blocks a request (full buffer = drop).
-type tracer struct {
-	url     string
-	service string
-	client  *http.Client
-	spans   chan otlpSpan
-	mu      sync.Mutex // serialises flushes
-}
-
-func newTracer(endpoint, service string) *tracer {
-	if endpoint == "" {
-		return nil
+// setupTelemetry installs the global tracer and meter providers from the standard OTEL_* env vars. It returns a
+// shutdown func that flushes both; without OTEL_EXPORTER_OTLP_ENDPOINT it installs nothing (no-op providers).
+func setupTelemetry(ctx context.Context) func(context.Context) {
+	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
+		return func(context.Context) {}
 	}
-	return &tracer{
-		url:     strings.TrimRight(endpoint, "/") + "/v1/traces",
-		service: service,
-		client:  &http.Client{Timeout: 5 * time.Second},
-		spans:   make(chan otlpSpan, 4*maxBatch),
+	res, err := resource.Merge(
+		resource.NewSchemaless(semconv.ServiceName(appName()), semconv.ServiceVersion(version)),
+		resource.Default(), // telemetry.sdk.*, OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES (these win)
+	)
+	if err != nil {
+		log.Printf("telemetry: resource: %v", err)
+	}
+	te, err := otlptracehttp.New(ctx)
+	if err != nil {
+		log.Printf("telemetry: off, trace exporter: %v", err)
+		return func(context.Context) {}
+	}
+	me, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithTemporalitySelector(deltaSelector))
+	if err != nil {
+		log.Printf("telemetry: off, metric exporter: %v", err)
+		return func(context.Context) {}
+	}
+	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(te), sdktrace.WithResource(res))
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewPeriodicReader(me)), sdkmetric.WithResource(res))
+	otel.SetTracerProvider(tp)
+	otel.SetMeterProvider(mp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	if err := runtime.Start(runtime.WithMeterProvider(mp)); err != nil {
+		log.Printf("telemetry: runtime metrics: %v", err)
+	}
+	return func(ctx context.Context) {
+		_ = tp.Shutdown(ctx)
+		_ = mp.Shutdown(ctx)
 	}
 }
 
-func (t *tracer) record(s otlpSpan) {
-	select {
-	case t.spans <- s:
-	default: // buffer full: drop rather than slow the app down
+// deltaSelector: New Relic's recommended temporality (delta for counters and histograms, cumulative otherwise).
+func deltaSelector(k sdkmetric.InstrumentKind) metricdata.Temporality {
+	switch k {
+	case sdkmetric.InstrumentKindCounter, sdkmetric.InstrumentKindHistogram, sdkmetric.InstrumentKindObservableCounter:
+		return metricdata.DeltaTemporality
 	}
+	return metricdata.CumulativeTemporality
 }
 
-// flush sends everything buffered so far.
-func (t *tracer) flush() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for {
-		batch := make([]otlpSpan, 0, maxBatch)
-	fill:
-		for len(batch) < maxBatch {
-			select {
-			case s := <-t.spans:
-				batch = append(batch, s)
-			default:
-				break fill
+// serverHandler wraps the mux with otelhttp. otelhttp reads the ServeMux pattern (Go 1.22+) after the handler ran:
+// it becomes http.route on the span and on http.server.request.duration, and names the span "GET /api/items".
+// /healthz (probes) is not traced.
+func serverHandler(mux *http.ServeMux) http.Handler {
+	routed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r)
+		if r.Pattern != "" { // otelhttp puts the route on the metric only; the span gets it here
+			route := r.Pattern[strings.IndexByte(r.Pattern, ' ')+1:] // "GET /version" -> "/version"
+			trace.SpanFromContext(r.Context()).SetAttributes(semconv.HTTPRoute(route))
+		}
+	})
+	return otelhttp.NewHandler(routed, "http.server",
+		otelhttp.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/healthz" }),
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			if r.Pattern == "" {
+				return r.Method
 			}
-		}
-		if len(batch) == 0 {
-			return
-		}
-		t.post(batch)
-	}
+			if strings.HasPrefix(r.Pattern, r.Method+" ") {
+				return r.Pattern
+			}
+			return r.Method + " " + r.Pattern
+		}),
+	)
 }
 
-func (t *tracer) post(batch []otlpSpan) {
-	body := map[string]any{"resourceSpans": []any{map[string]any{
-		"resource": map[string]any{"attributes": []otlpAttr{
-			strAttr("service.name", t.service),
-			strAttr("service.version", version),
-			strAttr("telemetry.sdk.language", "go"),
-		}},
-		"scopeSpans": []any{map[string]any{"scope": map[string]string{"name": "app-template"}, "spans": batch}},
-	}}}
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return
+// instrumentedClient is an http.Client whose calls become CLIENT spans + http.client.request.duration.
+// propagate=false keeps trace headers away from third parties (tesco.com).
+func instrumentedClient(timeout time.Duration, propagate bool) *http.Client {
+	opts := []otelhttp.Option{}
+	if !propagate {
+		opts = append(opts, otelhttp.WithPropagators(propagation.NewCompositeTextMapPropagator()))
 	}
-	resp, err := t.client.Post(t.url, "application/json", bytes.NewReader(buf))
-	if err != nil {
-		log.Printf("telemetry: export failed: %v", err)
-		return
-	}
-	_ = resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		log.Printf("telemetry: export rejected: HTTP %d", resp.StatusCode)
-	}
+	return &http.Client{Timeout: timeout, Transport: otelhttp.NewTransport(http.DefaultTransport, opts...)}
 }
 
-func (t *tracer) run() {
-	for range time.Tick(flushEvery) {
-		t.flush()
-	}
-}
+// clientSpan is a logical outbound operation (e.g. one LLM chat) around the HTTP call(s) it makes.
+type clientSpan struct{ s trace.Span }
 
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(code int) {
-	r.status = code
-	r.ResponseWriter.WriteHeader(code)
-}
-
-// Flush lets streamed responses (the assistant chat) through the tracing wrapper.
-func (r *statusRecorder) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-type spanAttrsKey struct{}
-
-type spanAttrs struct {
-	mu      sync.Mutex
-	attrs   []otlpAttr
-	traceID string // ids of the request span, so outbound calls become its children
-	spanID  string
-}
-
-// appTracer is the process tracer (set by setupTracing); nil means tracing is off.
-var appTracer *tracer
-
-// clientSpan is an outbound call in progress (nil-safe: every method is a no-op without tracing).
-type clientSpan struct {
-	t     *tracer
-	s     otlpSpan
-	start time.Time
-}
-
-// startSpan opens a CLIENT span: a child of the request span in ctx, or a new trace for background work.
-func startSpan(ctx context.Context, name string, attrs ...otlpAttr) *clientSpan {
-	if appTracer == nil {
-		return nil
-	}
-	s := otlpSpan{TraceID: randHex(16), SpanID: randHex(8), Name: name, Kind: spanKindClient, Attributes: attrs}
-	if sa, ok := ctx.Value(spanAttrsKey{}).(*spanAttrs); ok && sa.traceID != "" {
-		s.TraceID, s.ParentID = sa.traceID, sa.spanID
-	}
-	return &clientSpan{t: appTracer, s: s, start: time.Now()}
+// startSpan opens a CLIENT span as a child of the span in ctx; pass the returned ctx to the HTTP request so the
+// otelhttp span nests under it.
+func startSpan(ctx context.Context, name string, attrs ...otlpAttr) (context.Context, *clientSpan) {
+	ctx, s := otel.Tracer(scopeName).Start(ctx, name, trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attrs...))
+	return ctx, &clientSpan{s}
 }
 
 // end records the span; a non-nil err marks it as an error with error.type.
 func (c *clientSpan) end(err error, attrs ...otlpAttr) {
-	if c == nil {
-		return
-	}
-	c.s.StartUnixNs = strconv.FormatInt(c.start.UnixNano(), 10)
-	c.s.EndUnixNs = strconv.FormatInt(time.Now().UnixNano(), 10)
-	c.s.Attributes = append(c.s.Attributes, attrs...)
+	c.s.SetAttributes(attrs...)
 	if err != nil {
-		c.s.Status.Code = statusCodeError
-		c.s.Attributes = append(c.s.Attributes, strAttr("error.type", errType(err)))
+		c.s.SetStatus(codes.Error, err.Error())
+		c.s.SetAttributes(strAttr("error.type", errType(err)))
 	}
-	c.t.record(c.s)
+	c.s.End()
 }
 
 // addSpanAttr attaches an attribute to the current request's span; a no-op without tracing.
 func addSpanAttr(ctx context.Context, a otlpAttr) {
-	if sa, ok := ctx.Value(spanAttrsKey{}).(*spanAttrs); ok {
-		sa.mu.Lock()
-		sa.attrs = append(sa.attrs, a)
-		sa.mu.Unlock()
-	}
-}
-
-// middleware wraps the mux; with a nil tracer it returns the mux unchanged.
-func (t *tracer) middleware(mux *http.ServeMux) http.Handler {
-	if t == nil {
-		return mux
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" { // probes: not worth a span
-			mux.ServeHTTP(w, r)
-			return
-		}
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		sa := &spanAttrs{traceID: randHex(16), spanID: randHex(8)}
-		r = r.WithContext(context.WithValue(r.Context(), spanAttrsKey{}, sa)) // r.Pattern is set on this copy
-		mux.ServeHTTP(rec, r)
-		end := time.Now()
-		route := r.Pattern // set by ServeMux (Go 1.23+), e.g. "GET /version"; empty on 404
-		if route == "" {
-			route = r.Method + " (unmatched)"
-		} else if !strings.HasPrefix(route, r.Method+" ") {
-			route = r.Method + " " + route
-		}
-		s := otlpSpan{
-			TraceID:     sa.traceID,
-			SpanID:      sa.spanID,
-			Name:        route,
-			Kind:        spanKindServer,
-			StartUnixNs: strconv.FormatInt(start.UnixNano(), 10),
-			EndUnixNs:   strconv.FormatInt(end.UnixNano(), 10),
-			Attributes: []otlpAttr{
-				strAttr("http.request.method", r.Method),
-				strAttr("http.route", strings.TrimPrefix(route, r.Method+" ")),
-				strAttr("url.path", r.URL.Path),
-				intAttr("http.response.status_code", rec.status),
-			},
-		}
-		sa.mu.Lock()
-		s.Attributes = append(s.Attributes, sa.attrs...)
-		sa.mu.Unlock()
-		if rec.status >= 500 {
-			s.Status.Code = statusCodeError
-		}
-		t.record(s)
-	})
-}
-
-// setupTracing reads the standard OTel env vars; returns nil (tracing off) without an endpoint.
-func setupTracing() *tracer {
-	service := os.Getenv("OTEL_SERVICE_NAME")
-	if service == "" {
-		service = appName()
-	}
-	t := newTracer(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), service)
-	appTracer = t
-	if t != nil {
-		go t.run()
-	}
-	return t
+	trace.SpanFromContext(ctx).SetAttributes(a)
 }

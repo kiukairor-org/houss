@@ -31,7 +31,7 @@ type tescoProvider struct {
 func newTescoProvider() *tescoProvider {
 	return &tescoProvider{
 		baseURL: "https://www.tesco.com",
-		client:  &http.Client{Timeout: 15 * time.Second},
+		client:  instrumentedClient(15*time.Second, false), // no trace headers to a third party
 		gap:     3 * time.Second,
 	}
 }

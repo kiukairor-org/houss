@@ -88,18 +88,16 @@ func TestTescoClassification(t *testing.T) {
 
 func TestTescoClassificationSpanAttribute(t *testing.T) {
 	srv := tescoDiagServer(t)
-	col, got := fakeCollector(t)
-	tr := newTracer(col.URL, "demo")
+	exp, _ := testTelemetry(t)
 	tp := &tescoProvider{baseURL: srv.URL, client: srv.Client()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /lookup", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = tp.Lookup(r.Context(), "forbidden")
 		w.WriteHeader(http.StatusNoContent)
 	})
-	tr.middleware(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/lookup", nil))
-	tr.flush()
-	spans := got()
-	if len(spans) != 1 || attr(spans[0], "tesco.classification")["stringValue"] != classBlocked {
+	serverHandler(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/lookup", nil))
+	spans := exp.GetSpans()
+	if len(spans) != 1 || spanAttr(spans[0], "tesco.classification").AsString() != classBlocked {
 		t.Fatalf("got %v", spans)
 	}
 }

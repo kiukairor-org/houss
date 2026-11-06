@@ -2,116 +2,114 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"sync"
 	"testing"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// fakeCollector records OTLP/HTTP JSON trace exports.
-func fakeCollector(t *testing.T) (*httptest.Server, func() []map[string]any) {
+// testTelemetry installs in-memory trace and metric pipelines as the global providers for one test.
+func testTelemetry(t *testing.T) (*tracetest.InMemoryExporter, *sdkmetric.ManualReader) {
 	t.Helper()
-	var mu sync.Mutex
-	var spans []map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/traces" || r.Header.Get("Content-Type") != "application/json" {
-			t.Errorf("unexpected export %s %q", r.URL.Path, r.Header.Get("Content-Type"))
-		}
-		b, _ := io.ReadAll(r.Body)
-		var body struct {
-			ResourceSpans []struct {
-				Resource   map[string]any `json:"resource"`
-				ScopeSpans []struct {
-					Spans []map[string]any `json:"spans"`
-				} `json:"scopeSpans"`
-			} `json:"resourceSpans"`
-		}
-		if err := json.Unmarshal(b, &body); err != nil {
-			t.Errorf("invalid OTLP JSON: %v", err)
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		for _, rs := range body.ResourceSpans {
-			if !strings.Contains(string(b), `"service.name"`) {
-				t.Errorf("missing service.name resource attribute")
-			}
-			for _, ss := range rs.ScopeSpans {
-				spans = append(spans, ss.Spans...)
-			}
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv, func() []map[string]any { mu.Lock(); defer mu.Unlock(); return spans }
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(exp))
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	prevT, prevM, prevP := otel.GetTracerProvider(), otel.GetMeterProvider(), otel.GetTextMapPropagator()
+	otel.SetTracerProvider(tp)
+	otel.SetMeterProvider(mp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() { otel.SetTracerProvider(prevT); otel.SetMeterProvider(prevM); otel.SetTextMapPropagator(prevP) })
+	return exp, reader
 }
 
-func attr(span map[string]any, key string) map[string]any {
-	for _, a := range span["attributes"].([]any) {
-		m := a.(map[string]any)
-		if m["key"] == key {
-			return m["value"].(map[string]any)
+func spanAttr(s tracetest.SpanStub, key string) attribute.Value {
+	for _, a := range s.Attributes {
+		if string(a.Key) == key {
+			return a.Value
 		}
 	}
-	return nil
+	return attribute.Value{}
 }
 
-func TestTracingExportsServerSpans(t *testing.T) {
-	col, got := fakeCollector(t)
-	tr := newTracer(col.URL, "demo")
+// histogramRoutes returns http.route -> request count for one histogram metric.
+func histogramRoutes(t *testing.T, r *sdkmetric.ManualReader, name string) map[string]uint64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	if err := r.Collect(context.Background(), &rm); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]uint64{}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			for _, dp := range m.Data.(metricdata.Histogram[float64]).DataPoints {
+				key, _ := dp.Attributes.Value("http.route")
+				if key.AsString() == "" {
+					key, _ = dp.Attributes.Value("server.address")
+				}
+				got[key.AsString()] += dp.Count
+			}
+		}
+	}
+	return got
+}
+
+func TestServerSpansAndSemconvDurationMetric(t *testing.T) {
+	exp, reader := testTelemetry(t)
 	mux := newMux(testServer(t))
 	mux.HandleFunc("GET /fail", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "x"})
 	})
-	h := tr.middleware(mux)
+	h := serverHandler(mux)
 	for _, p := range []string{"/version", "/fail", "/nope", "/healthz"} {
 		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, p, nil))
 	}
-	tr.flush()
-	spans := got()
-	if len(spans) != 3 { // /healthz is not traced
-		t.Fatalf("got %d spans, want 3: %v", len(spans), spans)
-	}
-	byName := map[string]map[string]any{}
-	for _, s := range spans {
-		byName[s["name"].(string)] = s
-		if len(s["traceId"].(string)) != 32 || len(s["spanId"].(string)) != 16 || s["kind"].(float64) != 2 {
-			t.Fatalf("bad ids/kind: %v", s)
+	byName := map[string]tracetest.SpanStub{}
+	for _, s := range exp.GetSpans() {
+		byName[s.Name] = s
+		if s.SpanKind != trace.SpanKindServer {
+			t.Fatalf("want SERVER spans: %v", s.Name)
 		}
 	}
-	ok, fail, miss := byName["GET /version"], byName["GET /fail"], byName["GET (unmatched)"]
-	if ok == nil || fail == nil || miss == nil {
-		t.Fatalf("unexpected span names: %v", byName)
+	if len(byName) != 3 { // /healthz is not traced
+		t.Fatalf("got spans %v", byName)
 	}
-	if attr(ok, "http.response.status_code")["intValue"] != "200" || attr(fail, "http.response.status_code")["intValue"] != "500" {
-		t.Fatalf("status codes not recorded")
+	ok, fail := byName["GET /version"], byName["GET /fail"]
+	if spanAttr(ok, "http.route").AsString() != "/version" || spanAttr(fail, "http.response.status_code").AsInt64() != 500 {
+		t.Fatalf("route/status not recorded: %v %v", ok.Attributes, fail.Attributes)
 	}
-	if st := fail["status"].(map[string]any); st["code"].(float64) != 2 {
-		t.Fatalf("5xx span not marked as error: %v", st)
+	if fail.Status.Code != codes.Error || ok.Status.Code == codes.Error {
+		t.Fatalf("5xx must be an error, 2xx not")
 	}
-	if st := ok["status"].(map[string]any); len(st) != 0 {
-		t.Fatalf("2xx span should have unset status: %v", st)
+	// New Relic's OpenTelemetry APM view and golden metrics read this metric (http.route = transaction name).
+	routes := histogramRoutes(t, reader, "http.server.request.duration")
+	if routes["/version"] != 1 || routes["/fail"] != 1 {
+		t.Fatalf("http.server.request.duration by route: %v", routes)
 	}
 }
 
-func TestTracingOffWithoutEndpoint(t *testing.T) {
+func TestOffWithoutEndpoint(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	tr := setupTracing()
-	if tr != nil {
-		t.Fatal("tracer should be nil without an endpoint")
-	}
-	mux := newMux(testServer(t))
-	if h := tr.middleware(mux); h != http.Handler(mux) {
-		t.Fatal("nil tracer must return the mux unchanged")
+	setupTelemetry(context.Background())(context.Background()) // installs nothing, shutdown is a no-op
+	if _, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider); ok {
+		t.Fatal("no SDK provider must be installed without an endpoint")
 	}
 }
 
 func TestLLMCallsAreGenAIClientSpansInsideTheRequest(t *testing.T) {
-	col, got := fakeCollector(t)
-	tr := newTracer(col.URL, "demo")
-	appTracer = tr
-	t.Cleanup(func() { appTracer = nil })
+	exp, reader := testTelemetry(t)
 	l, _ := fakeLLM(t, func(w http.ResponseWriter) {
 		writeJSON(w, http.StatusOK, map[string]any{"model": "test-model", "prompt_eval_count": 42, "eval_count": 7,
 			"message": map[string]string{"role": "assistant", "content": `{"ok":true}`}})
@@ -123,47 +121,62 @@ func TestLLMCallsAreGenAIClientSpansInsideTheRequest(t *testing.T) {
 			t.Errorf("chat: %v", err)
 		}
 	})
-	tr.middleware(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ask", nil))
-	_ = l.chat(context.Background(), []llmMsg{{"user", "background"}}, nil, &map[string]any{}) // no request: own trace
-	tr.flush()
-	var server, child, bg map[string]any
-	for _, s := range got() {
+	serverHandler(mux).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ask", nil))
+	var server, genai, httpc tracetest.SpanStub
+	for _, s := range exp.GetSpans() {
 		switch {
-		case s["kind"].(float64) == 2:
+		case s.SpanKind == trace.SpanKindServer:
 			server = s
-		case s["parentSpanId"] != nil:
-			child = s
-		default:
-			bg = s
+		case s.Name == "chat test-model":
+			genai = s
+		case s.SpanKind == trace.SpanKindClient:
+			httpc = s
 		}
 	}
-	if server == nil || child == nil || bg == nil {
-		t.Fatalf("want server, child and background spans: %v", got())
+	if genai.Parent.SpanID() != server.SpanContext.SpanID() || genai.SpanKind != trace.SpanKindClient {
+		t.Fatalf("gen_ai span is not a CLIENT child of the request span")
 	}
-	if child["traceId"] != server["traceId"] || child["parentSpanId"] != server["spanId"] || child["kind"].(float64) != 3 {
-		t.Fatalf("LLM span is not a CLIENT child of the request span: %v / %v", child, server)
+	if httpc.Parent.SpanID() != genai.SpanContext.SpanID() || spanAttr(httpc, "http.request.method").AsString() != "POST" {
+		t.Fatalf("otelhttp client span is not a child of the gen_ai span: %v", httpc)
 	}
-	if child["name"] != "chat test-model" || attr(child, "gen_ai.provider.name")["stringValue"] != "ollama" ||
-		attr(child, "gen_ai.operation.name")["stringValue"] != "chat" || attr(child, "gen_ai.request.model")["stringValue"] != "test-model" ||
-		attr(child, "gen_ai.usage.input_tokens")["intValue"] != "42" || attr(child, "gen_ai.usage.output_tokens")["intValue"] != "7" {
-		t.Fatalf("missing gen_ai attributes: %v", child)
+	if spanAttr(genai, "gen_ai.provider.name").AsString() != "ollama" || spanAttr(genai, "gen_ai.request.model").AsString() != "test-model" ||
+		spanAttr(genai, "gen_ai.usage.input_tokens").AsInt64() != 42 || spanAttr(genai, "gen_ai.usage.output_tokens").AsInt64() != 7 {
+		t.Fatalf("missing gen_ai attributes: %v", genai.Attributes)
 	}
-	if bg["traceId"] == server["traceId"] {
-		t.Fatal("background call must start its own trace")
+	if len(histogramRoutes(t, reader, "http.client.request.duration")) == 0 {
+		t.Fatal("outbound call must record http.client.request.duration (external services)")
 	}
 }
 
 func TestLLMSpanRecordsErrors(t *testing.T) {
-	col, got := fakeCollector(t)
-	appTracer = newTracer(col.URL, "demo")
-	t.Cleanup(func() { appTracer = nil })
+	exp, _ := testTelemetry(t)
 	l, _ := fakeLLM(t, func(w http.ResponseWriter) { http.Error(w, "boom", http.StatusInternalServerError) })
 	if err := l.chat(context.Background(), []llmMsg{{"user", "hi"}}, nil, &map[string]any{}); err == nil {
 		t.Fatal("want an error")
 	}
-	appTracer.flush()
-	s := got()
-	if len(s) != 1 || s[0]["status"].(map[string]any)["code"].(float64) != 2 || attr(s[0], "error.type")["stringValue"] != "llm_output" {
-		t.Fatalf("error not recorded on the span: %v", s)
+	for _, s := range exp.GetSpans() {
+		if s.Name == "chat test-model" {
+			if s.Status.Code != codes.Error || spanAttr(s, "error.type").AsString() != "llm_output" {
+				t.Fatalf("error not recorded on the span: %v", s)
+			}
+			return
+		}
+	}
+	t.Fatal("no gen_ai span")
+}
+
+func TestThirdPartyCallsCarryNoTraceHeaders(t *testing.T) {
+	testTelemetry(t)
+	var hdr string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hdr = r.Header.Get("traceparent") }))
+	defer srv.Close()
+	ctx, sp := startSpan(context.Background(), "parent")
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL, nil)
+	if _, err := instrumentedClient(0, false).Do(req); err != nil {
+		t.Fatal(err)
+	}
+	sp.end(nil)
+	if hdr != "" {
+		t.Fatalf("traceparent leaked to a third party: %q", hdr)
 	}
 }

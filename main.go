@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -78,8 +79,9 @@ func main() {
 	}
 	s.learn = newLearner(os.Getenv("DATA_DIR"), st, s.llm)
 	go s.learn.run()
-	tr := setupTracing() // OTLP traces to $OTEL_EXPORTER_OTLP_ENDPOINT (see telemetry.go)
-	srv := &http.Server{Addr: addr, Handler: tr.middleware(newMux(s)), ReadHeaderTimeout: 5 * time.Second}
+	shutdown := setupTelemetry(context.Background()) // OTLP traces + metrics to $OTEL_EXPORTER_OTLP_ENDPOINT (telemetry.go)
+	defer shutdown(context.Background())
+	srv := &http.Server{Addr: addr, Handler: serverHandler(newMux(s)), ReadHeaderTimeout: 5 * time.Second}
 	log.Printf("%s %s listening on %s", appName(), version, addr)
 	log.Fatal(srv.ListenAndServe())
 }

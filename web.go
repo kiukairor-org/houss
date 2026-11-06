@@ -29,6 +29,9 @@ func serveEmbedded(name, ctype string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		if name == "index.html" {
+			b = withBrowserAgent(b, browserAgent)
+		}
 		w.Header().Set("Content-Type", ctype)
 		w.Header().Set("Cache-Control", "no-cache") // the service worker owns offline caching
 		_, _ = w.Write(b)

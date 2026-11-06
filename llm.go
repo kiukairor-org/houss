@@ -47,7 +47,7 @@ func newLLM() *llmClient {
 	if model == "" {
 		model = "qwen3:1.7b"
 	}
-	return &llmClient{url: strings.TrimRight(url, "/"), model: model, client: &http.Client{}}
+	return &llmClient{url: strings.TrimRight(url, "/"), model: model, client: instrumentedClient(0, true)}
 }
 
 // Available reports whether smart features should be tried now (nil-safe).
@@ -94,7 +94,7 @@ type llmMsg struct {
 // Connection problems and timeouts return errLLMDown; anything malformed returns errLLMOutput.
 // genAISpan opens the OpenTelemetry GenAI client span for one Ollama /api/chat call. New Relic AI Monitoring
 // reads gen_ai.* spans natively, so the LLM shows there without an agent (think:false stays native).
-func (l *llmClient) genAISpan(ctx context.Context) *clientSpan {
+func (l *llmClient) genAISpan(ctx context.Context) (context.Context, *clientSpan) {
 	return startSpan(ctx, "chat "+l.model,
 		strAttr("gen_ai.provider.name", "ollama"), strAttr("gen_ai.system", "ollama"),
 		strAttr("gen_ai.operation.name", "chat"), strAttr("gen_ai.request.model", l.model),
@@ -130,7 +130,7 @@ func errType(err error) string {
 }
 
 func (l *llmClient) chat(ctx context.Context, msgs []llmMsg, schema any, out any) (err error) {
-	sp := l.genAISpan(ctx)
+	ctx, sp := l.genAISpan(ctx)
 	var usage ollamaUsage
 	defer func() { sp.end(err, usage.attrs()...) }()
 	body, _ := json.Marshal(map[string]any{
