@@ -1,7 +1,7 @@
 # Multi-arch (linux/arm64 required). Built natively on ubuntu-24.04-arm in CI.
 FROM golang:1.26.9-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
