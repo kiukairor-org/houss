@@ -41,16 +41,40 @@ func strAttr(k, v string) otlpAttr { return attribute.String(k, v) }
 
 func intAttr(k string, v int) otlpAttr { return attribute.Int(k, v) }
 
+// telemetryResource builds the OpenTelemetry resource. resource.Default() is the BASE (telemetry.sdk.*, and a
+// service.name of "unknown_service:<exe>" when nothing else sets one). In resource.Merge(a, b) the SECOND argument
+// wins, so we always set service.name explicitly on top of it and never fall back to unknown_service. The name is
+// the one the environment supplies (OTEL_SERVICE_NAME, else OTEL_RESOURCE_ATTRIBUTES), else appName() -- which reads
+// APP_NAME, set by Argo CD to the repo name, e.g. "houss" or "pr-5-houss" for a preview.
+func telemetryResource() (*resource.Resource, error) {
+	name := envServiceName()
+	if name == "" {
+		name = appName()
+	}
+	return resource.Merge(resource.Default(), resource.NewSchemaless(semconv.ServiceName(name), semconv.ServiceVersion(version)))
+}
+
+// envServiceName returns the service.name the OTEL_* environment supplies (OTEL_SERVICE_NAME, else a service.name
+// entry in OTEL_RESOURCE_ATTRIBUTES), or "" when neither is set.
+func envServiceName() string {
+	if v := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAME")); v != "" {
+		return v
+	}
+	for _, kv := range strings.Split(os.Getenv("OTEL_RESOURCE_ATTRIBUTES"), ",") {
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.TrimSpace(k) == string(semconv.ServiceNameKey) {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
 // setupTelemetry installs the global tracer and meter providers from the standard OTEL_* env vars. It returns a
 // shutdown func that flushes both; without OTEL_EXPORTER_OTLP_ENDPOINT it installs nothing (no-op providers).
 func setupTelemetry(ctx context.Context) func(context.Context) {
 	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" {
 		return func(context.Context) {}
 	}
-	res, err := resource.Merge(
-		resource.NewSchemaless(semconv.ServiceName(appName()), semconv.ServiceVersion(version)),
-		resource.Default(), // telemetry.sdk.*, OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES (these win)
-	)
+	res, err := telemetryResource()
 	if err != nil {
 		log.Printf("telemetry: resource: %v", err)
 	}

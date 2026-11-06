@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -178,5 +179,40 @@ func TestThirdPartyCallsCarryNoTraceHeaders(t *testing.T) {
 	sp.end(nil)
 	if hdr != "" {
 		t.Fatalf("traceparent leaked to a third party: %q", hdr)
+	}
+}
+
+func resourceServiceName(t *testing.T) string {
+	t.Helper()
+	res, err := telemetryResource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range res.Attributes() {
+		if a.Key == semconv.ServiceNameKey {
+			return a.Value.AsString()
+		}
+	}
+	return ""
+}
+
+func TestResourceServiceNameResolution(t *testing.T) {
+	t.Setenv("APP_NAME", "houss")
+	// No OTEL_* name: fall back to appName(), never unknown_service.
+	t.Setenv("OTEL_SERVICE_NAME", "")
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "")
+	if got := resourceServiceName(t); got != "houss" {
+		t.Fatalf("env unset: service.name = %q, want houss", got)
+	}
+	// Explicit OTEL_SERVICE_NAME wins (e.g. a preview would set APP_NAME=pr-5-houss anyway).
+	t.Setenv("OTEL_SERVICE_NAME", "override")
+	if got := resourceServiceName(t); got != "override" {
+		t.Fatalf("OTEL_SERVICE_NAME: service.name = %q, want override", got)
+	}
+	// service.name inside OTEL_RESOURCE_ATTRIBUTES also wins.
+	t.Setenv("OTEL_SERVICE_NAME", "")
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=preview,service.name=from-attrs")
+	if got := resourceServiceName(t); got != "from-attrs" {
+		t.Fatalf("OTEL_RESOURCE_ATTRIBUTES: service.name = %q, want from-attrs", got)
 	}
 }
