@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -123,11 +124,13 @@ func setupLogs(ctx context.Context, res *resource.Resource) func(context.Context
 	}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(le)), sdklog.WithResource(res))
 	global.SetLoggerProvider(lp)
-	slog.SetDefault(slog.New(slog.NewMultiHandler(
-		slog.NewTextHandler(os.Stderr, nil),
-		otelslog.NewHandler(scopeName, otelslog.WithLoggerProvider(lp)),
-	)))
+	slog.SetDefault(slog.New(logHandler(os.Stderr, lp)))
 	return func(ctx context.Context) { _ = lp.Shutdown(ctx) }
+}
+
+// logHandler fans each record out to a text handler on w and to the otelslog bridge on lp.
+func logHandler(w io.Writer, lp *sdklog.LoggerProvider) slog.Handler {
+	return slog.NewMultiHandler(slog.NewTextHandler(w, nil), otelslog.NewHandler(scopeName, otelslog.WithLoggerProvider(lp)))
 }
 
 // deltaSelector: New Relic's recommended temporality (delta for counters and histograms, cumulative otherwise).

@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -214,5 +218,54 @@ func TestResourceServiceNameResolution(t *testing.T) {
 	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=preview,service.name=from-attrs")
 	if got := resourceServiceName(t); got != "from-attrs" {
 		t.Fatalf("OTEL_RESOURCE_ATTRIBUTES: service.name = %q, want from-attrs", got)
+	}
+}
+
+// recordProcessor is an in-memory sdklog processor.
+type recordProcessor struct{ recs []sdklog.Record }
+
+func (p *recordProcessor) OnEmit(_ context.Context, r *sdklog.Record) error {
+	p.recs = append(p.recs, r.Clone())
+	return nil
+}
+func (*recordProcessor) Enabled(context.Context, sdklog.EnabledParameters) bool { return true }
+func (*recordProcessor) Shutdown(context.Context) error                         { return nil }
+func (*recordProcessor) ForceFlush(context.Context) error                       { return nil }
+
+func TestLogHandlerCarriesTraceContextAndKeepsStderr(t *testing.T) {
+	proc := &recordProcessor{}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(proc))
+	var stderr bytes.Buffer
+	logger := slog.New(logHandler(&stderr, lp))
+
+	tp := sdktrace.NewTracerProvider()
+	ctx, span := tp.Tracer("t").Start(context.Background(), "req")
+	defer span.End()
+	logger.InfoContext(ctx, "llm: chat", "outcome", "ok")
+	logger.Info("no context")
+
+	if len(proc.recs) != 2 {
+		t.Fatalf("exported %d records, want 2", len(proc.recs))
+	}
+	if got, want := proc.recs[0].TraceID(), span.SpanContext().TraceID(); got != want {
+		t.Errorf("trace id = %s, want %s", got, want)
+	}
+	if got, want := proc.recs[0].SpanID(), span.SpanContext().SpanID(); got != want {
+		t.Errorf("span id = %s, want %s", got, want)
+	}
+	if proc.recs[1].TraceID().IsValid() {
+		t.Error("record logged without a span context must have no trace id")
+	}
+	if !strings.Contains(stderr.String(), "outcome=ok") {
+		t.Errorf("stderr lost the line: %q", stderr.String())
+	}
+}
+
+func TestNoEndpointLeavesLoggingUntouched(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	before := slog.Default()
+	setupTelemetry(context.Background())(context.Background())
+	if slog.Default() != before {
+		t.Error("setupTelemetry without an endpoint replaced the default slog logger")
 	}
 }
