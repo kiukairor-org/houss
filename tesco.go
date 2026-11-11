@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -179,9 +179,9 @@ func (t *tescoProvider) Lookup(ctx context.Context, item string) (Price, error) 
 	if d.Classification != classOK {
 		snip = d.Snippet
 	}
-	log.Printf("tesco lookup %q: status=%d size=%d class=%s tiles=%d server=%q cf-ray=%q retry-after=%q cookies=%v snippet=%q err=%q",
-		item, d.Status, d.BodySize, d.Classification, d.Tiles, d.Headers["Server"], d.Headers["Cf-Ray"],
-		d.Headers["Retry-After"], d.CookieNames, snip, d.Error)
+	slog.InfoContext(ctx, "tesco lookup", "item", item, "status", d.Status, "size", d.BodySize, "class", d.Classification,
+		"tiles", d.Tiles, "server", d.Headers["Server"], "cf-ray", d.Headers["Cf-Ray"], "retry-after", d.Headers["Retry-After"],
+		"cookies", d.CookieNames, "snippet", snip, "err", d.Error)
 	addSpanAttr(ctx, strAttr("tesco.classification", d.Classification))
 	if d.Error != "" {
 		return Price{}, errors.New(d.Error)

@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -226,7 +226,7 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		addSpanAttr(r.Context(), intAttr("llm.duration_ms", ms))
 		addSpanAttr(r.Context(), intAttr("llm.items", len(got)))
 		if s.llm != nil {
-			log.Printf("llm: quickadd outcome=%s duration_ms=%d items=%d", outcome, ms, len(got))
+			slog.InfoContext(r.Context(), "llm: quickadd", "outcome", outcome, "duration_ms", ms, "items", len(got))
 		}
 		if outcome != "ok" {
 			writeJSON(w, http.StatusOK, map[string]any{"items": nil, "fallback": outcome})
