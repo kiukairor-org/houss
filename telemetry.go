@@ -5,26 +5,36 @@
 //   - otelhttp on every outbound http.Client (instrumentedClient): CLIENT spans + http.client.request.duration, so
 //     Ollama and tesco.com show as external services.
 //   - Go runtime metrics (GC, goroutines, memory) for New Relic's Go runtime page.
+//   - logs: the official log/slog bridge (otelslog). Every log line -- including the standard library's log.Printf,
+//     which Go routes through the default slog handler -- is exported over OTLP; lines logged with a request
+//     context (slog.InfoContext) carry that request's trace and span ids, which is what "logs in context" needs.
+//     The same lines still go to stderr for kubectl logs.
 //
 // No endpoint set (tests, local runs) means no export. Keep this file when building on the template.
 package main
 
 import (
 	"context"
+	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -96,10 +106,31 @@ func setupTelemetry(ctx context.Context) func(context.Context) {
 	if err := runtime.Start(runtime.WithMeterProvider(mp)); err != nil {
 		log.Printf("telemetry: runtime metrics: %v", err)
 	}
+	shutdownLogs := setupLogs(ctx, res)
 	return func(ctx context.Context) {
 		_ = tp.Shutdown(ctx)
 		_ = mp.Shutdown(ctx)
+		shutdownLogs(ctx)
 	}
+}
+
+// setupLogs makes log/slog (and with it the standard log package) write to stderr AND to OTLP through the official
+// otelslog bridge. A failure here leaves logging as it was (stderr only).
+func setupLogs(ctx context.Context, res *resource.Resource) func(context.Context) {
+	le, err := otlploghttp.New(ctx)
+	if err != nil {
+		log.Printf("telemetry: logs stay on stderr only, log exporter: %v", err)
+		return func(context.Context) {}
+	}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(le)), sdklog.WithResource(res))
+	global.SetLoggerProvider(lp)
+	slog.SetDefault(slog.New(logHandler(os.Stderr, lp)))
+	return func(ctx context.Context) { _ = lp.Shutdown(ctx) }
+}
+
+// logHandler fans each record out to a text handler on w and to the otelslog bridge on lp.
+func logHandler(w io.Writer, lp *sdklog.LoggerProvider) slog.Handler {
+	return slog.NewMultiHandler(slog.NewTextHandler(w, nil), otelslog.NewHandler(scopeName, otelslog.WithLoggerProvider(lp)))
 }
 
 // deltaSelector: New Relic's recommended temporality (delta for counters and histograms, cumulative otherwise).

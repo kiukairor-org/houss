@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -292,7 +292,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	addSpanAttr(r.Context(), strAttr("llm.outcome", outcome))
 	addSpanAttr(r.Context(), intAttr("llm.first_token_ms", firstMs))
 	addSpanAttr(r.Context(), intAttr("llm.duration_ms", int(time.Since(start).Milliseconds())))
-	log.Printf("llm: chat outcome=%s first_token_ms=%d duration_ms=%d chars=%d", outcome, firstMs, time.Since(start).Milliseconds(), chars)
+	slog.InfoContext(r.Context(), "llm: chat", "outcome", outcome, "first_token_ms", firstMs, "duration_ms", time.Since(start).Milliseconds(), "chars", chars)
 	if err != nil && chars > 0 {
 		_, _ = w.Write([]byte("\n\n[interrupted]"))
 	}
