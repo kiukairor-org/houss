@@ -23,14 +23,29 @@ func TestSorterFilesFlaggedItems(t *testing.T) {
 	newSorter(st, l).pass()
 
 	a, _ := st.Get("a")
-	if a.Tab != "todos" || a.TargetDate != "2026-11-06" || a.NeedsSort || a.Title != "call the plumber friday" || a.UpdatedAt <= monday.UnixMilli() {
+	// The LLM says "todos", but the tab the person added from is never overridden.
+	if a.Tab != "shopping" || a.TargetDate != "2026-11-06" || a.NeedsSort || a.Title != "call the plumber friday" || a.UpdatedAt <= monday.UnixMilli() {
 		t.Fatalf("a: %+v", a)
 	}
-	if b, _ := st.Get("b"); b.Tab != "todos" || b.TargetDate != "2030-01-01" {
+	if b, _ := st.Get("b"); b.Tab != "shopping" || b.TargetDate != "2030-01-01" {
 		t.Fatalf("a date the person chose must stay: %+v", b)
 	}
 	if c, _ := st.Get("c"); c.Tab != "shopping" || c.NeedsSort {
 		t.Fatalf("c: %+v", c)
+	}
+}
+
+func TestSorterKeepsToothbrushesOnShopping(t *testing.T) {
+	st, _ := openStore(t.TempDir())
+	l, _ := fakeLLM(t, answer(`{"items":[{"title":"brosse à dents enfant","list":"todos","when":""}]}`))
+	flagged(t, st, "a", "brosse à dents enfant", "shopping", "")
+	flagged(t, st, "b", "brosse à dents enfant", "todos", "")
+	newSorter(st, l).pass()
+	if a, _ := st.Get("a"); a.Tab != "shopping" || a.NeedsSort {
+		t.Fatalf("shopping item moved: %+v", a)
+	}
+	if b, _ := st.Get("b"); b.Tab != "todos" || b.NeedsSort {
+		t.Fatalf("todo item moved: %+v", b)
 	}
 }
 
@@ -71,7 +86,7 @@ func TestFinishSortKeepsNewerEdits(t *testing.T) {
 	if _, err := st.Apply(edited); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.FinishSort(read, "todos", "2026-11-06"); ok || err != nil {
+	if ok, err := st.FinishSort(read, "2026-11-06"); ok || err != nil {
 		t.Fatalf("stale sort applied: %v %v", ok, err)
 	}
 	if a, _ := st.Get("a"); a.Title != "call the plumber" || a.Tab != "shopping" || !a.NeedsSort {

@@ -215,18 +215,15 @@ func (s *store) NeedsSort(n int) []Item {
 	return out
 }
 
-// FinishSort files a sorted item: it sets the tab (if given) and the due date (only when the item
-// has none) and clears NeedsSort. It changes nothing if the item was edited since it was read, so
+// FinishSort files a sorted item: it sets the due date (only when the item has none) and clears
+// NeedsSort. The tab is never changed. It changes nothing if the item was edited since it was read, so
 // a person's edit always wins; the next pass sees the new version.
-func (s *store) FinishSort(read Item, tab, due string) (bool, error) {
+func (s *store) FinishSort(read Item, due string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, ok := s.items[read.ID]
 	if !ok || cur.Deleted || !cur.NeedsSort || cur.UpdatedAt != read.UpdatedAt {
 		return false, nil
-	}
-	if tabs[tab] {
-		cur.Tab = tab
 	}
 	if cur.TargetDate == "" {
 		cur.TargetDate = due

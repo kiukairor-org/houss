@@ -1,6 +1,6 @@
 // Background sorting: a note added as typed while smart add was unavailable (at night, offline,
-// LLM slow) is flagged needs_sort by the client. Once the LLM answers again, this files it under
-// the right tab and, if it has none, a due date. It never renames, merges or deletes items, and it
+// LLM slow) is flagged needs_sort by the client. Once the LLM answers again, this gives it a due
+// date if it has none. It never moves an item to another tab: the tab is the person's choice. It never renames, merges or deletes items, and it
 // never runs inside a request.
 package main
 
@@ -59,7 +59,7 @@ func (s *sorter) pass() {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), sortTimeout)
-		tab, due, err := s.llm.Classify(ctx, it.Title, time.UnixMilli(it.UpdatedAt))
+		_, due, err := s.llm.Classify(ctx, it.Title, time.UnixMilli(it.UpdatedAt))
 		cancel()
 		if errors.Is(err, errLLMDown) {
 			log.Printf("llm: sort item=%s: %v", it.ID, err)
@@ -71,14 +71,14 @@ func (s *sorter) pass() {
 			if s.tries[it.ID] < maxSortTries {
 				continue
 			}
-			tab, due = "", "" // give up: leave the item where the person put it
+			due = "" // give up: leave the item as the person put it
 		}
 		delete(s.tries, it.ID)
-		ok, err := s.store.FinishSort(it, tab, due)
+		ok, err := s.store.FinishSort(it, due)
 		if err != nil {
 			log.Printf("llm: sort item=%s: save: %v", it.ID, err)
 		} else if ok {
-			log.Printf("llm: sorted item=%s tab=%q due=%q", it.ID, tab, due)
+			log.Printf("llm: sorted item=%s due=%q", it.ID, due)
 		}
 	}
 }
