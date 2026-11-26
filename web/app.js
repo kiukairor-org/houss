@@ -255,7 +255,7 @@ async function smartAdd(text) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 6000);
   try {
-    const res = await fetch('/api/quickadd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }), signal: ctl.signal });
+    const res = await fetch('/api/quickadd', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, tab: addTab }), signal: ctl.signal });
     if (!res.ok) return null;
     const d = await res.json();
     return Array.isArray(d.items) && d.items.length ? d.items : null;

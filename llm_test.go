@@ -135,6 +135,16 @@ func TestQuickAddAPI(t *testing.T) {
 		t.Fatalf("quickadd must not save anything, store has %d items", n)
 	}
 
+	// The tab the note is added from wins over the model's pick, on either tab.
+	s.llm, _ = fakeLLM(t, answer(`{"items":[{"title":"brosse à dents enfant","list":"todos","when":""}]}`))
+	for _, tab := range []string{"shopping", "todos"} {
+		rec = do(t, h, "POST", "/api/quickadd", `{"text":"brosse à dents enfant","tab":"`+tab+`"}`, c)
+		out = struct{ Items []Item }{}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Items) != 1 || out.Items[0].Tab != tab {
+			t.Fatalf("tab %s: %s", tab, rec.Body)
+		}
+	}
+
 	s.llm.setUp(false) // e.g. at night: answer at once instead of waiting for a timeout
 	rec = do(t, h, "POST", "/api/quickadd", `{"text":"milk"}`, c)
 	if !strings.Contains(rec.Body.String(), `"fallback":"unavailable"`) {

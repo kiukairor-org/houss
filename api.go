@@ -207,6 +207,7 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/quickadd", a.require(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Text string `json:"text"`
+			Tab  string `json:"tab"` // the tab the note is added from; the LLM never overrides it
 		}
 		if err := decodeBody(w, r, &body); err != nil || strings.TrimSpace(body.Text) == "" || len(body.Text) > 200 {
 			apiErr(w, errInvalid)
@@ -231,6 +232,11 @@ func (s *server) registerAPI(mux *http.ServeMux) {
 		if outcome != "ok" {
 			writeJSON(w, http.StatusOK, map[string]any{"items": nil, "fallback": outcome})
 			return
+		}
+		if tabs[body.Tab] {
+			for i := range got {
+				got[i].Tab = body.Tab
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": got})
 	}))
